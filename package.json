@@ -1,0 +1,25 @@
+{
+  "name": "gemini-share-hub",
+  "version": "1.0.0",
+  "description": "לוח שיתוף מנויי Google One ו-Gemini Advanced בישראל",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node scripts/test-api.js"
+  },
+  "keywords": [
+    "gemini",
+    "google-one",
+    "family-sharing",
+    "community"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}
