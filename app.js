@@ -5,73 +5,26 @@
 // Secondary: Group Pooling (5 Members Cost Sharing) with Admin Management
 // ==========================================================================
 
+// Master Admin PIN that works everywhere for all posts and groups
+const MASTER_PIN = '1123355';
+
 // Detect Static Environment (GitHub Pages / file:// protocol)
 const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
 
-// Default Seed Data for Static Environment
-const SEED_POSTS = [
-  {
-    id: 1,
-    type: 'offer',
-    name: 'אלי פ.',
-    email: 'eli.pro.ai@gmail.com',
-    forum_user: 'eli_pro',
-    cost_type: 'free',
-    notes: 'מציע מקום במנוי Google One AI Premium (Gemini Advanced), פנו אליי במייל או בפורום מתמחים טופ (@eli_pro).',
-    pin: '1234',
-    status: 'active',
-    created_at: new Date(Date.now() - 3600000 * 2).toISOString()
-  },
-  {
-    id: 2,
-    type: 'request',
-    name: 'דוד א.',
-    email: 'david.ai.tech@gmail.com',
-    forum_user: 'david_ai',
-    cost_type: 'paid',
-    notes: 'מחפש להצטרף לשיתוף משפחתי פעיל, אשמח להשתתף בעלויות. משתמש בפורום: @david_ai.',
-    pin: '1234',
-    status: 'active',
-    created_at: new Date(Date.now() - 3600000 * 5).toISOString()
-  }
-];
-
-const SEED_GROUPS = [
-  {
-    id: 1,
-    title: '🎓 [הנחת סטודנט] קבוצת שיתוף שנתית — יונתן כהן',
-    manager_name: 'יונתן כהן',
-    manager_email: 'yonatan.gemini.ai@gmail.com',
-    manager_forum_user: 'yonatan_c',
-    has_discount: true,
-    discount_label: 'הנחת סטודנט',
-    cost_per_member: '25 ש"ח לחודש',
-    total_slots: 6,
-    require_approval: true,
-    private_members: false,
-    requirements: 'פעיל בפורום מתמחים טופ, שימוש אישי בלבד',
-    prepay_required: true,
-    prepay_months: 3,
-    notes: 'קבוצת שיתוף שנתית למנויי ג\'מיני, 5 מקומות פנויים, הנחת סטודנט, חלוקה שווה.',
-    pin: '1234',
-    status: 'open',
-    members: [],
-    pending_members: [],
-    members_count: 0,
-    pending_count: 0,
-    slots_taken: 1,
-    slots_free: 5,
-    needed_members: 5,
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString()
-  }
-];
+// Default Seed Data for Clean Production Board (Zero samples)
+const SEED_POSTS = [];
+const SEED_GROUPS = [];
 
 // Local Client-Side Database (Active on GitHub Pages)
 const LocalDB = {
-  getPostsKey: () => 'gemini_share_posts_v2',
-  getGroupsKey: () => 'gemini_share_groups_v2',
+  getPostsKey: () => 'gemini_share_posts_v3',
+  getGroupsKey: () => 'gemini_share_groups_v3',
 
   init() {
+    // Clear legacy seed cache from earlier testing versions
+    ['gemini_share_posts_v1', 'gemini_share_groups_v1', 'gemini_share_posts_v2', 'gemini_share_groups_v2'].forEach(k => {
+      localStorage.removeItem(k);
+    });
     if (!localStorage.getItem(this.getPostsKey())) {
       localStorage.setItem(this.getPostsKey(), JSON.stringify(SEED_POSTS));
     }
@@ -126,7 +79,10 @@ const LocalDB = {
     let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
     const post = posts.find(p => p.id === Number(id));
     if (!post) return { success: false, error: 'המודעה לא נמצאה' };
-    if (post.pin !== String(pin).trim()) return { success: false, error: 'קוד סודי (PIN) שגוי' };
+    const cleanPin = String(pin || '').trim();
+    if (cleanPin !== MASTER_PIN && post.pin !== cleanPin) {
+      return { success: false, error: 'קוד סודי (PIN) שגוי' };
+    }
     posts = posts.filter(p => p.id !== Number(id));
     localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
     return { success: true };
@@ -232,7 +188,10 @@ const LocalDB = {
     const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
     const group = groups.find(g => g.id === Number(groupId));
     if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
-    if (group.pin !== String(pin).trim()) return { success: false, error: 'קוד ניהול (PIN) שגוי' };
+    const cleanPin = String(pin || '').trim();
+    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
+      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
+    }
     return { success: true, group };
   },
 
@@ -240,7 +199,10 @@ const LocalDB = {
     this.init();
     const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
     const group = groups.find(g => g.id === Number(groupId));
-    if (!group || group.pin !== String(pin).trim()) return { success: false, error: 'קוד שגוי' };
+    const cleanPin = String(pin || '').trim();
+    if (!group || (cleanPin !== MASTER_PIN && group.pin !== cleanPin)) {
+      return { success: false, error: 'קוד שגוי' };
+    }
 
     const pendingIdx = (group.pending_members || []).findIndex(m => m.id === Number(memberId));
     if (pendingIdx === -1) return { success: false, error: 'המשתתף לא נמצא' };
@@ -264,7 +226,10 @@ const LocalDB = {
     this.init();
     const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
     const group = groups.find(g => g.id === Number(groupId));
-    if (!group || group.pin !== String(pin).trim()) return { success: false, error: 'קוד שגוי' };
+    const cleanPin = String(pin || '').trim();
+    if (!group || (cleanPin !== MASTER_PIN && group.pin !== cleanPin)) {
+      return { success: false, error: 'קוד שגוי' };
+    }
 
     if (group.members) {
       group.members = group.members.filter(m => m.id !== Number(memberId));
@@ -281,6 +246,34 @@ const LocalDB = {
 
     localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
     return { success: true };
+  },
+
+  deleteGroup(groupId, pin) {
+    this.init();
+    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
+    const cleanPin = String(pin || '').trim();
+    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
+      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
+    }
+    groups = groups.filter(g => g.id !== Number(groupId));
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return { success: true };
+  },
+
+  toggleGroupStatus(groupId, newStatus, pin) {
+    this.init();
+    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
+    const cleanPin = String(pin || '').trim();
+    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
+      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
+    }
+    group.status = newStatus;
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return { success: true, group };
   },
 
   getStats() {
@@ -1397,6 +1390,18 @@ async function refreshAdminDashboard(groupId) {
 }
 
 async function closeAdminGroup(groupId) {
+  if (isStaticEnv) {
+    const res = LocalDB.toggleGroupStatus(groupId, 'closed', state.adminPin);
+    if (res.success) {
+      showToast('הקבוצה סומנה כסגורה', 'success');
+      refreshAdminDashboard(groupId);
+      loadGroups();
+    } else {
+      showToast(res.error, 'error');
+    }
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/close`, {
       method: 'POST',
@@ -1408,13 +1413,30 @@ async function closeAdminGroup(groupId) {
       showToast('הקבוצה סומנה כסגורה', 'success');
       refreshAdminDashboard(groupId);
       loadGroups();
+    } else {
+      showToast(data.error || 'שגיאה בסגירת הקבוצה', 'error');
     }
   } catch (err) {
+    const res = LocalDB.toggleGroupStatus(groupId, 'closed', state.adminPin);
     showToast('הקבוצה סומנה כסגורה', 'success');
+    refreshAdminDashboard(groupId);
+    loadGroups();
   }
 }
 
 async function reopenAdminGroup(groupId) {
+  if (isStaticEnv) {
+    const res = LocalDB.toggleGroupStatus(groupId, 'open', state.adminPin);
+    if (res.success) {
+      showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
+      refreshAdminDashboard(groupId);
+      loadGroups();
+    } else {
+      showToast(res.error, 'error');
+    }
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/reopen`, {
       method: 'POST',
@@ -1426,9 +1448,14 @@ async function reopenAdminGroup(groupId) {
       showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
       refreshAdminDashboard(groupId);
       loadGroups();
+    } else {
+      showToast(data.error || 'שגיאה בפתיחת הקבוצה מחדש', 'error');
     }
   } catch (err) {
-    showToast('הקבוצה נפתחה מחדש', 'success');
+    const res = LocalDB.toggleGroupStatus(groupId, 'open', state.adminPin);
+    showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
+    refreshAdminDashboard(groupId);
+    loadGroups();
   }
 }
 
@@ -1436,10 +1463,15 @@ async function deleteAdminGroup(groupId) {
   if (!confirm('האם אתה בטוח שברצונך למחוק קבוצה זו לצמיתות?')) return;
 
   if (isStaticEnv) {
-    showToast('הקבוצה נמחקה בהצלחה', 'success');
-    closeModal(groupAdminModal);
-    loadGroups();
-    loadStats();
+    const res = LocalDB.deleteGroup(groupId, state.adminPin);
+    if (res.success) {
+      showToast('הקבוצה נמחקה בהצלחה', 'success');
+      closeModal(groupAdminModal);
+      loadGroups();
+      loadStats();
+    } else {
+      showToast(res.error, 'error');
+    }
     return;
   }
 
@@ -1455,8 +1487,11 @@ async function deleteAdminGroup(groupId) {
       closeModal(groupAdminModal);
       loadGroups();
       loadStats();
+    } else {
+      showToast(data.error || 'שגיאה במחיקת הקבוצה', 'error');
     }
   } catch (err) {
+    const res = LocalDB.deleteGroup(groupId, state.adminPin);
     showToast('הקבוצה נמחקה בהצלחה', 'success');
     closeModal(groupAdminModal);
     loadGroups();
