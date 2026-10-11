@@ -1,12 +1,13 @@
 <?php
 /**
- * Gemini Share Hub — בדיקת שרת ומסד נתונים (Server Diagnostic Tool)
+ * Gemini Share Hub — בדיקת שרת מקיפה (Server Diagnostics: MySQL & SQLite)
  * פתח קובץ זה בדפדפן (לדוגמה: https://yourdomain.com/check.php) לבדיקה מהירה.
  */
 declare(strict_types=1);
 
 header('Content-Type: text/html; charset=utf-8');
 
+$config = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
 $results = [];
 
 // 1. PHP Version
@@ -17,79 +18,116 @@ $results[] = [
     'detail' => "גרסה נוכחית: $phpVersion (נדרש 7.4 ומעלה)"
 ];
 
-// 2. PDO Extension
-$pdoLoaded = extension_loaded('pdo');
-$results[] = [
-    'title' => 'הרחבת PDO',
-    'status' => $pdoLoaded ? 'ok' : 'error',
-    'detail' => $pdoLoaded ? 'מותקנת ופעילה' : 'חסרה! יש להפעיל הרחבת pdo ב-PHP של השרת'
-];
-
-// 3. PDO SQLite Driver
+// 2. PDO Drivers
 $drivers = PDO::getAvailableDrivers();
-$sqliteDriver = in_array('sqlite', $drivers, true);
-$results[] = [
-    'title' => 'דרייבר PDO SQLite (pdo_sqlite)',
-    'status' => $sqliteDriver ? 'ok' : 'error',
-    'detail' => $sqliteDriver 
-        ? 'מותקן ופעיל (' . implode(', ', $drivers) . ')' 
-        : 'חסר! ב-cPanel כנס ל-"Select PHP Version" -> לשונית Extensions -> סמן pdo_sqlite ו-sqlite3'
-];
-
-// 4. Data Directory
-$dataDir = __DIR__ . '/data';
-$dataDirExists = is_dir($dataDir);
-$dataDirWritable = $dataDirExists && is_writable($dataDir);
-$perms = $dataDirExists ? substr(sprintf('%o', fileperms($dataDir)), -4) : 'לא קיימת';
+$hasMysql = in_array('mysql', $drivers, true);
+$hasSqlite = in_array('sqlite', $drivers, true);
 
 $results[] = [
-    'title' => 'תיקיית data והרשאות כתיבה',
-    'status' => $dataDirWritable ? 'ok' : 'error',
-    'detail' => "קיימת: " . ($dataDirExists ? 'כן' : 'לא') . " | הרשאה נוכחית: $perms | הרשאת כתיבה ל-PHP: " . ($dataDirWritable ? 'יש ✅' : 'אין ❌ (יש להגדיר 0777)')
+    'title' => 'דרייברים של מסדי נתונים (PDO Drivers)',
+    'status' => $hasMysql ? 'ok' : 'error',
+    'detail' => "MySQL: " . ($hasMysql ? 'מותקן ופעיל ✅' : 'חסר ❌') . " | SQLite: " . ($hasSqlite ? 'מותקן ופעיל ✅' : 'לא פעיל')
 ];
 
-// 5. Database File
-$dbFile = $dataDir . '/gemini_share.sqlite';
-$dbFileExists = file_exists($dbFile);
-$dbFileWritable = $dbFileExists && is_writable($dbFile);
-$dbPerms = $dbFileExists ? substr(sprintf('%o', fileperms($dbFile)), -4) : 'לא קיים';
+// 3. MySQL Connection Test
+$mysqlConnected = false;
+$mysqlDbFound = null;
+$mysqlError = null;
 
-$results[] = [
-    'title' => 'קובץ מסד הנתונים gemini_share.sqlite',
-    'status' => ($dbFileExists && $dbFileWritable) ? 'ok' : ($dbFileExists ? 'warning' : 'info'),
-    'detail' => "קיים: " . ($dbFileExists ? 'כן' : 'לא') . " | הרשאה: $dbPerms | הרשאת כתיבה: " . ($dbFileWritable ? 'יש ✅' : 'אין ❌ (יש להגדיר 0666 או 0777)')
-];
+if ($hasMysql) {
+    $m = $config['mysql'] ?? [];
+    $host = $m['host'] ?? 'localhost';
+    $port = (int)($m['port'] ?? 3306);
+    $user = $m['user'] ?? 'eliste';
+    $pass = $m['pass'] ?? 'Aa@smartbinary';
+    $dbname = $m['dbname'] ?? 'eliste';
 
-// 6. Test DB Connection and Real Write/Read
-$writeSuccess = false;
-$dbError = null;
-if ($sqliteDriver && ($dataDirWritable || $dbFileWritable)) {
-    try {
-        $db = new PDO("sqlite:" . $dbFile, null, null, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_TIMEOUT => 3
-        ]);
-        $db->exec("PRAGMA busy_timeout = 3000;");
-        $db->exec("PRAGMA journal_mode = DELETE;");
+    $usersToTry = array_unique(array_filter([
+        $user,
+        $user . '_' . $user,
+        $user . '_gemini',
+        $user . '_db',
+        $user . '_admin'
+    ]));
 
-        // Try writing a test record
-        $db->exec("CREATE TABLE IF NOT EXISTS _test_diag (id INTEGER PRIMARY KEY, val TEXT, created_at TEXT);");
-        $db->exec("INSERT INTO _test_diag (val, created_at) VALUES ('diag_test', datetime('now'));");
-        $cnt = $db->query("SELECT count(*) FROM _test_diag;")->fetchColumn();
-        $db->exec("DROP TABLE _test_diag;");
-        $writeSuccess = true;
-    } catch (Exception $e) {
-        $dbError = $e->getMessage();
+    $pdo = null;
+    $connectedUser = null;
+
+    foreach ($usersToTry as $tryUser) {
+        foreach ([$host, '127.0.0.1'] as $tryHost) {
+            try {
+                $dsn = "mysql:host={$tryHost};port={$port};charset=utf8mb4";
+                $testPdo = new PDO($dsn, $tryUser, $pass, [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_TIMEOUT => 3
+                ]);
+                $pdo = $testPdo;
+                $connectedUser = $tryUser;
+                break 2;
+            } catch (Exception $e) {
+                $mysqlError = $e->getMessage();
+            }
+        }
+    }
+
+    if ($pdo) {
+        $mysqlConnected = true;
+        // Search available user databases
+        try {
+            $dbs = $pdo->query("SHOW DATABASES")->fetchAll(PDO::FETCH_COLUMN);
+            $userDbs = array_values(array_filter($dbs, function($d) {
+                return !in_array(strtolower($d), ['information_schema', 'performance_schema', 'sys', 'mysql']);
+            }));
+            if (!empty($userDbs)) {
+                $mysqlDbFound = implode(', ', $userDbs);
+            }
+        } catch (Exception $e) {}
+
+        if (!$mysqlDbFound) {
+            $dbsToTry = array_unique(array_filter([$dbname, $user . '_' . $dbname, $user . '_gemini', $user . '_' . $user]));
+            foreach ($dbsToTry as $tdb) {
+                try {
+                    $pdo->exec("USE `$tdb`");
+                    $mysqlDbFound = $tdb;
+                    break;
+                } catch (Exception $e) {}
+            }
+        }
     }
 }
 
 $results[] = [
-    'title' => 'בדיקת כתיבה וקריאה מעשית למסד הנתונים',
-    'status' => $writeSuccess ? 'ok' : 'error',
-    'detail' => $writeSuccess 
-        ? 'הצלחה מלאה! ה-PHP כותב וקורא ממסד הנתונים SQLite ללא שום שגיאה ✅' 
-        : 'נכשל: ' . ($dbError ?? 'אין אפשרות לכתוב (בדוק הרשאות או דרייבר)')
+    'title' => 'חיבור ל-MySQL (שרת cPanel)',
+    'status' => $mysqlConnected ? 'ok' : 'error',
+    'detail' => $mysqlConnected 
+        ? "התחבר בהצלחה עם משתמש '$connectedUser'! מסדי נתונים שזוהו: " . ($mysqlDbFound ?: 'יש לשייך מסד נתונים למשתמש') . " ✅"
+        : "נכשל: " . ($mysqlError ?: 'לא הצליח להתחבר. ודא שמשתמש וסיסמה נוצרו ב-MySQL Database Wizard ב-cPanel.')
+];
+
+// 4. MySQL Write / Read Test
+$mysqlWriteOk = false;
+$mysqlWriteErr = null;
+if ($mysqlConnected && $mysqlDbFound) {
+    try {
+        $firstDb = explode(',', $mysqlDbFound)[0];
+        $firstDb = trim($firstDb);
+        $pdo->exec("USE `$firstDb`");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS _diag_test (id INT AUTO_INCREMENT PRIMARY KEY, txt VARCHAR(50), d DATETIME);");
+        $pdo->exec("INSERT INTO _diag_test (txt, d) VALUES ('test_ok', NOW());");
+        $cnt = $pdo->query("SELECT count(*) FROM _diag_test")->fetchColumn();
+        $pdo->exec("DROP TABLE _diag_test;");
+        $mysqlWriteOk = true;
+    } catch (Exception $e) {
+        $mysqlWriteErr = $e->getMessage();
+    }
+}
+
+$results[] = [
+    'title' => 'בדיקת כתיבה וקריאה מעשית ב-MySQL',
+    'status' => $mysqlWriteOk ? 'ok' : ($mysqlConnected ? 'warning' : 'error'),
+    'detail' => $mysqlWriteOk
+        ? 'הצלחה מלאה! כתיבה, יצירת טבלאות וקריאה ב-MySQL עובדות ללא שום שגיאה! 🎉'
+        : ($mysqlWriteErr ? 'שגיאת כתיבה: ' . $mysqlWriteErr : 'טרם נבדק (ממתין לזיהוי מסד)')
 ];
 ?>
 <!DOCTYPE html>
@@ -161,16 +199,16 @@ $results[] = [
             text-align: center;
             font-size: 1.1rem;
             font-weight: bold;
-            background: <?php echo $writeSuccess ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'; ?>;
-            color: <?php echo $writeSuccess ? '#10B981' : '#EF4444'; ?>;
-            border: 1px solid <?php echo $writeSuccess ? '#10B981' : '#EF4444'; ?>;
+            background: <?php echo $mysqlWriteOk ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'; ?>;
+            color: <?php echo $mysqlWriteOk ? '#10B981' : '#EF4444'; ?>;
+            border: 1px solid <?php echo $mysqlWriteOk ? '#10B981' : '#EF4444'; ?>;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔍 בדיקת תקינות שרת ומסד נתונים</h1>
-        <p style="color: #94A3B8;">דף זה מריץ בדיקה מקיפה של כל מרכיבי השרת והרשאות הכתיבה ל-SQLite.</p>
+        <p style="color: #94A3B8;">דף זה מריץ בדיקה של חיבור MySQL והרשאות בשרת cPanel.</p>
         
         <?php foreach ($results as $r): ?>
             <div class="item <?php echo $r['status']; ?>">
@@ -185,10 +223,12 @@ $results[] = [
         <?php endforeach; ?>
 
         <div class="summary">
-            <?php if ($writeSuccess): ?>
-                🎉 השרת מוכן ב-100%! כתיבה וקריאה למסד הנתונים פועלות בצורה מושלמת.
+            <?php if ($mysqlWriteOk): ?>
+                🎉 השרת מחובר ל-MySQL ב-100%! כתיבה וקריאה למסד הנתונים פועלות בצורה מושלמת.
+            <?php elseif ($mysqlConnected): ?>
+                ⚠️ המשתמש התחבר בהצלחה, אך לא נמצא מסד נתונים. ודא שב-cPanel חיברת את המשתמש למסד עם ALL PRIVILEGES.
             <?php else: ?>
-                ⚠️ ישנה שגיאה שמונעת שמירה. בדוק את השורות המסומנות באדום למעלה.
+                ⚠️ ישנה שגיאת התחברות ל-MySQL. בדוק את הסיסמה והמשתמש שנוצרו ב-cPanel.
             <?php endif; ?>
         </div>
     </div>

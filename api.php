@@ -1,7 +1,7 @@
 <?php
 /**
- * Gemini Share Hub — Backend API (PHP + SQLite)
- * Self-contained server-side storage with zero external dependencies.
+ * Gemini Share Hub — Backend API (PHP + MySQL & SQLite Dual-Engine)
+ * Auto-detects and connects to MySQL with automatic fallback to SQLite.
  */
 
 declare(strict_types=1);
@@ -17,114 +17,268 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     exit;
 }
 
-// Master Admin PIN that bypasses any individual PIN check
+// Load Configuration
+$config = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
+$masterPin = (string)($config['master_pin'] ?? '1123355');
 const MASTER_PIN = '1123355';
 
-// Database setup
-$dataDir = __DIR__ . '/data';
-if (!is_dir($dataDir)) {
-    mkdir($dataDir, 0755, true);
-    // Protect sqlite database file from direct browser download
-    $htaccessContent = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n";
-    file_put_contents($dataDir . '/.htaccess', $htaccessContent);
+// Database Initialization (MySQL Primary with Auto-Detection & SQLite Fallback)
+$db = null;
+$dbType = 'none';
+$dbNameUsed = '';
+$initError = '';
+
+$driverPref = strtolower($config['driver'] ?? 'mysql');
+
+if ($driverPref === 'mysql') {
+    $m = $config['mysql'] ?? [];
+    $host = $m['host'] ?? 'localhost';
+    $port = (int)($m['port'] ?? 3306);
+    $user = $m['user'] ?? 'eliste';
+    $pass = $m['pass'] ?? 'Aa@smartbinary';
+    $dbname = $m['dbname'] ?? 'eliste';
+
+    // cPanel user variations
+    $usersToTry = array_unique(array_filter([
+        $user,
+        $user . '_' . $user,
+        $user . '_gemini',
+        $user . '_db',
+        $user . '_admin'
+    ]));
+
+    $pdo = null;
+    $connectedUser = null;
+
+    foreach ($usersToTry as $tryUser) {
+        foreach ([$host, '127.0.0.1'] as $tryHost) {
+            try {
+                $dsn = "mysql:host={$tryHost};port={$port};charset=utf8mb4";
+                $testPdo = new PDO($dsn, $tryUser, $pass, [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_TIMEOUT => 3
+                ]);
+                $pdo = $testPdo;
+                $connectedUser = $tryUser;
+                break 2;
+            } catch (Exception $e) {
+                $initError = $e->getMessage();
+            }
+        }
+    }
+
+    if (!$pdo) {
+        // Try connecting directly with specific dbname
+        $dbsToTry = array_unique(array_filter([
+            $dbname,
+            $user . '_' . $dbname,
+            $user . '_gemini',
+            $user . '_' . $user,
+            $user . '_db'
+        ]));
+        foreach ($dbsToTry as $tryDb) {
+            foreach ($usersToTry as $tryUser) {
+                foreach ([$host, '127.0.0.1'] as $tryHost) {
+                    try {
+                        $dsn = "mysql:host={$tryHost};port={$port};dbname={$tryDb};charset=utf8mb4";
+                        $pdo = new PDO($dsn, $tryUser, $pass, [
+                            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                            PDO::ATTR_TIMEOUT => 3
+                        ]);
+                        $connectedUser = $tryUser;
+                        $selectedDb = $tryDb;
+                        break 3;
+                    } catch (Exception $e) {
+                        $initError = $e->getMessage();
+                    }
+                }
+            }
+        }
+    }
+
+    if ($pdo) {
+        if (empty($selectedDb)) {
+            $selectedDb = null;
+            try {
+                $dbs = $pdo->query("SHOW DATABASES")->fetchAll(PDO::FETCH_COLUMN);
+                $userDbs = array_values(array_filter($dbs, function($d) {
+                    return !in_array(strtolower($d), ['information_schema', 'performance_schema', 'sys', 'mysql']);
+                }));
+                if (!empty($userDbs)) {
+                    foreach ($userDbs as $udb) {
+                        if ($udb === $dbname || str_contains($udb, $dbname) || str_contains($udb, 'gemini')) {
+                            $selectedDb = $udb;
+                            break;
+                        }
+                    }
+                    if (!$selectedDb) $selectedDb = $userDbs[0];
+                }
+            } catch (Exception $e) {}
+
+            if (!$selectedDb) {
+                $dbsToTry = array_unique(array_filter([
+                    $dbname,
+                    $user . '_' . $dbname,
+                    $user . '_gemini',
+                    $user . '_' . $user,
+                    $user . '_db'
+                ]));
+                foreach ($dbsToTry as $tryDb) {
+                    try {
+                        $pdo->exec("USE `$tryDb`");
+                        $selectedDb = $tryDb;
+                        break;
+                    } catch (Exception $e) {}
+                }
+            } else {
+                $pdo->exec("USE `$selectedDb`");
+            }
+        }
+
+        if ($selectedDb) {
+            $db = $pdo;
+            $dbType = 'mysql';
+            $dbNameUsed = $selectedDb;
+
+            // Initialize MySQL Tables
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS posts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    type VARCHAR(20) NOT NULL,
+                    name VARCHAR(100) NULL,
+                    email VARCHAR(255) NOT NULL,
+                    forum_user VARCHAR(100) NULL,
+                    cost_type VARCHAR(20) NOT NULL,
+                    notes TEXT NULL,
+                    pin_hash VARCHAR(255) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'active',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_posts_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+                CREATE TABLE IF NOT EXISTS `groups` (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    manager_name VARCHAR(100) NOT NULL,
+                    manager_email VARCHAR(255) NOT NULL,
+                    manager_forum_user VARCHAR(100) NULL,
+                    has_discount TINYINT(1) NOT NULL DEFAULT 0,
+                    discount_label VARCHAR(100) NULL,
+                    cost_per_member VARCHAR(50) NULL,
+                    total_slots INT NOT NULL DEFAULT 6,
+                    require_approval TINYINT(1) NOT NULL DEFAULT 0,
+                    private_members TINYINT(1) NOT NULL DEFAULT 0,
+                    requirements TEXT NULL,
+                    prepay_required TINYINT(1) NOT NULL DEFAULT 0,
+                    prepay_months INT NOT NULL DEFAULT 1,
+                    notes TEXT NULL,
+                    pin_hash VARCHAR(255) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_groups_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+                CREATE TABLE IF NOT EXISTS group_members (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    group_id INT NOT NULL,
+                    member_name VARCHAR(100) NOT NULL,
+                    member_email VARCHAR(255) NOT NULL,
+                    member_forum_user VARCHAR(100) NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'approved',
+                    notes TEXT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_members_group_id (group_id),
+                    CONSTRAINT fk_group_members_group FOREIGN KEY (group_id) REFERENCES `groups`(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            ");
+        }
+    }
 }
 
-$dbFile = $dataDir . '/gemini_share.sqlite';
+// Fallback to SQLite if MySQL is not available or failed
+if (!$db) {
+    $dataDir = __DIR__ . '/data';
+    if (!is_dir($dataDir)) {
+        mkdir($dataDir, 0777, true);
+        $htaccessContent = "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n";
+        file_put_contents($dataDir . '/.htaccess', $htaccessContent);
+    }
 
-// Verify write permissions early before SQLite locks
-$isWriteAction = in_array($_GET['action'] ?? $_POST['action'] ?? '', [
-    'create_post', 'delete_post', 'create_group', 'join_group',
-    'approve_member', 'remove_member', 'close_group', 'reopen_group', 'delete_group'
-], true);
+    $dbFile = $dataDir . '/gemini_share.sqlite';
 
-if ($isWriteAction) {
-    if (!is_writable($dataDir)) {
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'error' => 'שגיאת הרשאות בשרת: אין הרשאת כתיבה לתיקיית data. אנא הגדר ב-cPanel הרשאה 0777 לתיקיית data.'
+    try {
+        $db = new PDO("sqlite:" . $dbFile, null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_TIMEOUT => 3,
         ]);
+        $db->exec("PRAGMA busy_timeout = 3000;");
+        $db->exec("PRAGMA journal_mode = DELETE;");
+        $db->exec("PRAGMA synchronous = NORMAL;");
+        $db->exec("PRAGMA foreign_keys = ON;");
+
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                name TEXT,
+                email TEXT NOT NULL,
+                forum_user TEXT,
+                cost_type TEXT NOT NULL,
+                notes TEXT,
+                pin_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS `groups` (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                manager_name TEXT NOT NULL,
+                manager_email TEXT NOT NULL,
+                manager_forum_user TEXT,
+                has_discount INTEGER NOT NULL DEFAULT 0,
+                discount_label TEXT,
+                cost_per_member TEXT,
+                total_slots INTEGER NOT NULL DEFAULT 6,
+                require_approval INTEGER NOT NULL DEFAULT 0,
+                private_members INTEGER NOT NULL DEFAULT 0,
+                requirements TEXT,
+                prepay_required INTEGER NOT NULL DEFAULT 0,
+                prepay_months INTEGER NOT NULL DEFAULT 1,
+                notes TEXT,
+                pin_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES `groups`(id) ON DELETE CASCADE,
+                member_name TEXT NOT NULL,
+                member_email TEXT NOT NULL,
+                member_forum_user TEXT,
+                status TEXT NOT NULL DEFAULT 'approved',
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+        ");
+
+        $dbType = 'sqlite';
+        $dbNameUsed = 'gemini_share.sqlite';
+    } catch (Exception $e) {
+        http_response_code(500);
+        $err = "שגיאת התחברות למסד הנתונים: " . ($initError ? "MySQL: $initError | SQLite: " : '') . $e->getMessage();
+        echo json_encode(['success' => false, 'error' => $err]);
         exit;
     }
-    if (file_exists($dbFile) && !is_writable($dbFile)) {
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'error' => 'שגיאת הרשאות בשרת: אין הרשאת כתיבה לקובץ gemini_share.sqlite. אנא הגדר ב-cPanel הרשאה 0666 או 0777 לקובץ data/gemini_share.sqlite.'
-        ]);
-        exit;
-    }
 }
-
-try {
-    $db = new PDO("sqlite:" . $dbFile, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_TIMEOUT => 3,
-    ]);
-    $db->exec("PRAGMA busy_timeout = 3000;");
-    $db->exec("PRAGMA journal_mode = DELETE;");
-    $db->exec("PRAGMA synchronous = NORMAL;");
-    $db->exec("PRAGMA foreign_keys = ON;");
-} catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'שגיאת התחברות למסד הנתונים: ' . $e->getMessage()]);
-    exit;
-}
-
-// Initialize tables if they do not exist
-$db->exec("
-    CREATE TABLE IF NOT EXISTS posts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK(type IN ('offer', 'request')),
-        name TEXT,
-        email TEXT NOT NULL,
-        forum_user TEXT,
-        cost_type TEXT NOT NULL CHECK(cost_type IN ('free', 'paid')),
-        notes TEXT,
-        pin_hash TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'closed')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-    );
-
-    CREATE TABLE IF NOT EXISTS groups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        manager_name TEXT NOT NULL,
-        manager_email TEXT NOT NULL,
-        manager_forum_user TEXT,
-        has_discount INTEGER NOT NULL DEFAULT 0,
-        discount_label TEXT,
-        cost_per_member TEXT,
-        total_slots INTEGER NOT NULL DEFAULT 6,
-        require_approval INTEGER NOT NULL DEFAULT 0,
-        private_members INTEGER NOT NULL DEFAULT 0,
-        requirements TEXT,
-        prepay_required INTEGER NOT NULL DEFAULT 0,
-        prepay_months INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        pin_hash TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'full', 'closed')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-    );
-
-    CREATE TABLE IF NOT EXISTS group_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-        member_name TEXT NOT NULL,
-        member_email TEXT NOT NULL,
-        member_forum_user TEXT,
-        status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved', 'pending')),
-        notes TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
-    CREATE INDEX IF NOT EXISTS idx_groups_status ON groups(status);
-    CREATE INDEX IF NOT EXISTS idx_members_group_id ON group_members(group_id);
-");
 
 // Helper: Read input data (supports JSON or Form POST)
 function getInput(): array {
@@ -170,29 +324,37 @@ function formatGroup(array $g, PDO $db, bool $isManager = false): array {
     $membersCount = count($approved);
     $pendingCount = count($pending);
     $totalSlots = (int)($g['total_slots'] ?? 6);
-    $slotsTaken = 1 + $membersCount;
+    $slotsTaken = 1 + $membersCount; // 1 manager + approved members
     $slotsFree = max(0, $totalSlots - $slotsTaken);
 
-    // Privacy masking for public viewers
     $publicMembers = [];
-    if (!$isManager && (int)$g['private_members'] === 1) {
-        for ($i = 0; $i < $membersCount; $i++) {
+    $isPrivate = !empty($g['private_members']);
+
+    foreach ($approved as $m) {
+        if ($isManager || !$isPrivate) {
             $publicMembers[] = [
+                'id' => (int)$m['id'],
+                'member_name' => $m['member_name'],
+                'member_email' => $isManager ? $m['member_email'] : maskEmail($m['member_email']),
+                'member_forum_user' => $m['member_forum_user'] ?? null,
+                'created_at' => $m['created_at']
+            ];
+        } else {
+            $publicMembers[] = [
+                'id' => (int)$m['id'],
                 'member_name' => 'משתתף חסוי',
-                'member_email' => '*** חסוי',
+                'member_email' => '***@***',
                 'member_forum_user' => null,
-                'created_at' => null
+                'created_at' => $m['created_at']
             ];
         }
-    } else {
-        $publicMembers = $approved;
     }
 
     $result = [
         'id' => $gid,
         'title' => $g['title'],
         'manager_name' => $g['manager_name'],
-        'manager_email' => $isManager ? $g['manager_email'] : ($g['private_members'] ? '*** חסוי' : $g['manager_email']),
+        'manager_email' => $isManager ? $g['manager_email'] : maskEmail($g['manager_email']),
         'manager_forum_user' => $g['manager_forum_user'],
         'has_discount' => (bool)$g['has_discount'],
         'discount_label' => $g['discount_label'],
@@ -221,9 +383,19 @@ function formatGroup(array $g, PDO $db, bool $isManager = false): array {
     return $result;
 }
 
+function maskEmail(string $email): string {
+    $parts = explode('@', $email);
+    if (count($parts) !== 2) return '***@***';
+    $name = $parts[0];
+    $domain = $parts[1];
+    $maskedName = mb_substr($name, 0, 2) . '***';
+    return $maskedName . '@' . $domain;
+}
+
 // Route action
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 $input = getInput();
+$now = date('Y-m-d H:i:s');
 
 try {
     switch ($action) {
@@ -299,8 +471,8 @@ try {
 
             $pinHash = password_hash($pin, PASSWORD_BCRYPT);
             $stmt = $db->prepare("
-                INSERT INTO posts (type, name, email, forum_user, cost_type, notes, pin_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO posts (type, name, email, forum_user, cost_type, notes, pin_hash, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $type,
@@ -309,7 +481,9 @@ try {
                 !empty($forumUser) ? mb_substr($forumUser, 0, 40) : null,
                 $costType,
                 mb_substr($notes, 0, 500),
-                $pinHash
+                $pinHash,
+                $now,
+                $now
             ]);
 
             $newId = (int)$db->lastInsertId();
@@ -357,7 +531,7 @@ try {
             $hasDiscount = $_GET['has_discount'] ?? 'all';
             $search = trim((string)($_GET['search'] ?? ''));
 
-            $sql = "SELECT * FROM groups WHERE 1=1";
+            $sql = "SELECT * FROM `groups` WHERE 1=1";
             $params = [];
 
             if ($status === 'open') {
@@ -442,34 +616,36 @@ try {
             $pinHash = password_hash($pin, PASSWORD_BCRYPT);
 
             $stmt = $db->prepare("
-                INSERT INTO groups (
+                INSERT INTO `groups` (
                     title, manager_name, manager_email, manager_forum_user, has_discount,
                     discount_label, cost_per_member, total_slots, require_approval,
                     private_members, requirements, prepay_required, prepay_months,
-                    notes, pin_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    notes, pin_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
 
             $stmt->execute([
-                mb_substr($title, 0, 100),
+                mb_substr($title, 0, 150),
                 mb_substr($managerName, 0, 50),
                 $managerEmail,
                 !empty($managerForumUser) ? mb_substr($managerForumUser, 0, 40) : null,
                 $hasDiscount,
-                !empty($discountLabel) ? mb_substr($discountLabel, 0, 60) : ($hasDiscount ? 'הנחת סטודנט / מחיר מוזל' : null),
-                !empty($costPerMember) ? mb_substr($costPerMember, 0, 40) : null,
+                mb_substr($discountLabel, 0, 80),
+                mb_substr($costPerMember, 0, 30),
                 $totalSlots,
                 $requireApproval,
                 $privateMembers,
-                !empty($requirements) ? mb_substr($requirements, 0, 500) : null,
+                mb_substr($requirements, 0, 300),
                 $prepayRequired,
                 $prepayMonths,
                 mb_substr($notes, 0, 500),
-                $pinHash
+                $pinHash,
+                $now,
+                $now
             ]);
 
             $newGroupId = (int)$db->lastInsertId();
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$newGroupId]);
 
             echo json_encode(['success' => true, 'group' => formatGroup($stmt->fetch(), $db, false)]);
@@ -497,7 +673,7 @@ try {
             }
             if (empty($memberEmail) || !filter_var($memberEmail, FILTER_VALIDATE_EMAIL)) throw new Exception('כתובת אימייל אינה תקינה');
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -526,8 +702,8 @@ try {
             $status = ((int)$group['require_approval'] === 1) ? 'pending' : 'approved';
 
             $insStmt = $db->prepare("
-                INSERT INTO group_members (group_id, member_name, member_email, member_forum_user, status, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO group_members (group_id, member_name, member_email, member_forum_user, status, notes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             $insStmt->execute([
                 $groupId,
@@ -535,16 +711,17 @@ try {
                 $memberEmail,
                 !empty($memberForumUser) ? mb_substr($memberForumUser, 0, 40) : null,
                 $status,
-                mb_substr($notes, 0, 300)
+                mb_substr($notes, 0, 300),
+                $now
             ]);
 
             // If newly approved filled up group, update status
             if ($status === 'approved' && (1 + $approvedCount + 1) >= (int)$group['total_slots']) {
-                $updStmt = $db->prepare("UPDATE groups SET status = 'full', updated_at = datetime('now', 'localtime') WHERE id = ?");
-                $updStmt->execute([$groupId]);
+                $updStmt = $db->prepare("UPDATE `groups` SET status = 'full', updated_at = ? WHERE id = ?");
+                $updStmt->execute([$now, $groupId]);
             }
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
 
             echo json_encode([
@@ -564,7 +741,7 @@ try {
 
             if ($groupId <= 0 || empty($pin)) throw new Exception('פרטי אימות חסרים');
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -589,7 +766,7 @@ try {
             $memberId = (int)($input['member_id'] ?? 0);
             $pin = trim((string)($input['pin'] ?? ''));
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -612,7 +789,7 @@ try {
             $updStmt->execute([$memberId, $groupId]);
 
             if (1 + $approvedCount + 1 >= (int)$group['total_slots']) {
-                $db->prepare("UPDATE groups SET status = 'full', updated_at = datetime('now', 'localtime') WHERE id = ?")->execute([$groupId]);
+                $db->prepare("UPDATE `groups` SET status = 'full', updated_at = ? WHERE id = ?")->execute([$now, $groupId]);
             }
 
             echo json_encode(['success' => true, 'message' => 'המשתתף אושר בהצלחה ונוסף לקבוצה']);
@@ -626,7 +803,7 @@ try {
             $memberId = (int)($input['member_id'] ?? 0);
             $pin = trim((string)($input['pin'] ?? ''));
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -646,7 +823,7 @@ try {
             $approvedCount = (int)$cntStmt->fetch()['cnt'];
 
             if (1 + $approvedCount < (int)$group['total_slots'] && $group['status'] === 'full') {
-                $db->prepare("UPDATE groups SET status = 'open', updated_at = datetime('now', 'localtime') WHERE id = ?")->execute([$groupId]);
+                $db->prepare("UPDATE `groups` SET status = 'open', updated_at = ? WHERE id = ?")->execute([$now, $groupId]);
             }
 
             echo json_encode(['success' => true, 'message' => 'המשתתף הוסר מהקבוצה בהצלחה']);
@@ -660,7 +837,7 @@ try {
             $groupId = (int)($input['group_id'] ?? 0);
             $pin = trim((string)($input['pin'] ?? ''));
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -680,7 +857,7 @@ try {
                 $newStatus = (1 + $cnt >= (int)$group['total_slots']) ? 'full' : 'open';
             }
 
-            $db->prepare("UPDATE groups SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")->execute([$newStatus, $groupId]);
+            $db->prepare("UPDATE `groups` SET status = ?, updated_at = ? WHERE id = ?")->execute([$newStatus, $now, $groupId]);
 
             echo json_encode(['success' => true, 'status' => $newStatus]);
             break;
@@ -692,7 +869,7 @@ try {
             $groupId = (int)($input['group_id'] ?? 0);
             $pin = trim((string)($input['pin'] ?? ''));
 
-            $stmt = $db->prepare("SELECT * FROM groups WHERE id = ?");
+            $stmt = $db->prepare("SELECT * FROM `groups` WHERE id = ?");
             $stmt->execute([$groupId]);
             $group = $stmt->fetch();
             if (!$group) throw new Exception('הקבוצה לא נמצאה');
@@ -703,7 +880,7 @@ try {
                 exit;
             }
 
-            $db->prepare("DELETE FROM groups WHERE id = ?")->execute([$groupId]);
+            $db->prepare("DELETE FROM `groups` WHERE id = ?")->execute([$groupId]);
             echo json_encode(['success' => true, 'message' => 'הקבוצה נמחקה לצמיתות']);
             break;
 
@@ -713,14 +890,16 @@ try {
         case 'stats':
             $offers = (int)$db->query("SELECT COUNT(*) FROM posts WHERE status = 'active' AND type = 'offer'")->fetchColumn();
             $requests = (int)$db->query("SELECT COUNT(*) FROM posts WHERE status = 'active' AND type = 'request'")->fetchColumn();
-            $groups = (int)$db->query("SELECT COUNT(*) FROM groups WHERE status IN ('open', 'full')")->fetchColumn();
+            $groups = (int)$db->query("SELECT COUNT(*) FROM `groups` WHERE status IN ('open', 'full')")->fetchColumn();
             echo json_encode([
                 'success' => true,
                 'stats' => [
                     'offers' => $offers,
                     'requests' => $requests,
                     'groups' => $groups
-                ]
+                ],
+                'engine' => $dbType,
+                'database' => $dbNameUsed
             ]);
             break;
 
