@@ -146,9 +146,13 @@ async function apiCall(action, options = {}) {
   const method = options.method || 'GET';
   let url = `${API_ENDPOINT}?action=${encodeURIComponent(action)}`;
   
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
   const fetchOpts = {
     method,
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json' },
+    signal: controller.signal
   };
 
   if (method === 'GET' && options.params) {
@@ -158,12 +162,24 @@ async function apiCall(action, options = {}) {
     fetchOpts.body = JSON.stringify(options.body);
   }
 
-  const res = await fetch(url, fetchOpts);
+  let res;
+  try {
+    res = await fetch(url, fetchOpts);
+  } catch (netErr) {
+    clearTimeout(timeoutId);
+    if (netErr.name === 'AbortError') {
+      throw new Error('השרת לא מגיב (Timeout). נא לבדוק הרשאות כתיבה לתיקיית data.');
+    }
+    throw new Error('שגיאת תקשורת עם השרת');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   let data;
   try {
     data = await res.json();
   } catch (e) {
-    throw new Error('שגיאת תקשורת עם השרת');
+    throw new Error('שגיאת תקשורת עם השרת: התקבלה תשובה לא תקינה');
   }
 
   if (!res.ok || data.success === false) {

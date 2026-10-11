@@ -30,11 +30,41 @@ if (!is_dir($dataDir)) {
 }
 
 $dbFile = $dataDir . '/gemini_share.sqlite';
+
+// Verify write permissions early before SQLite locks
+$isWriteAction = in_array($_GET['action'] ?? $_POST['action'] ?? '', [
+    'create_post', 'delete_post', 'create_group', 'join_group',
+    'approve_member', 'remove_member', 'close_group', 'reopen_group', 'delete_group'
+], true);
+
+if ($isWriteAction) {
+    if (!is_writable($dataDir)) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => 'שגיאת הרשאות בשרת: אין הרשאת כתיבה לתיקיית data. אנא הגדר ב-cPanel הרשאה 0777 לתיקיית data.'
+        ]);
+        exit;
+    }
+    if (file_exists($dbFile) && !is_writable($dbFile)) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => 'שגיאת הרשאות בשרת: אין הרשאת כתיבה לקובץ gemini_share.sqlite. אנא הגדר ב-cPanel הרשאה 0666 או 0777 לקובץ data/gemini_share.sqlite.'
+        ]);
+        exit;
+    }
+}
+
 try {
-    $db = new PDO("sqlite:" . $dbFile);
-    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    $db->exec("PRAGMA journal_mode = WAL;");
+    $db = new PDO("sqlite:" . $dbFile, null, null, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_TIMEOUT => 3,
+    ]);
+    $db->exec("PRAGMA busy_timeout = 3000;");
+    $db->exec("PRAGMA journal_mode = DELETE;");
+    $db->exec("PRAGMA synchronous = NORMAL;");
     $db->exec("PRAGMA foreign_keys = ON;");
 } catch (Exception $e) {
     http_response_code(500);
