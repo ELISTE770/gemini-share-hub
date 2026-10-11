@@ -25,12 +25,15 @@ const LocalDB = {
     ['gemini_share_posts_v1', 'gemini_share_groups_v1', 'gemini_share_posts_v2', 'gemini_share_groups_v2'].forEach(k => {
       localStorage.removeItem(k);
     });
-    if (!localStorage.getItem(this.getPostsKey())) {
-      localStorage.setItem(this.getPostsKey(), JSON.stringify(SEED_POSTS));
-    }
-    if (!localStorage.getItem(this.getGroupsKey())) {
-      localStorage.setItem(this.getGroupsKey(), JSON.stringify(SEED_GROUPS));
-    }
+
+    // Purge any lingering sample records that might have been cached
+    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
+    posts = posts.filter(p => p.email && !p.email.includes('eli.pro') && !p.email.includes('david.ai') && !p.email.includes('test'));
+    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
+
+    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    groups = groups.filter(g => g.manager_email && !g.manager_email.includes('yonatan.gemini') && !g.manager_email.includes('test'));
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
   },
 
   getPosts(filters = {}) {
