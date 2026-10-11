@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Share Hub | לוח שיתוף מנויי Google One & Gemini Advanced</title>
+  <meta name="description" content="לוח שיתוף קהילתי חופשי למנויי Google One ו-Gemini Advanced בישראל. מצאו שותפים לשיתוף משפחתי או הצטרפו בקלות, עם אפשרות לפתיחת קבוצות עלויות.">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&family=Rubik:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Floating Glass Navbar -->
+  <header class="site-header" id="navbar">
+    <div class="header-container glass-panel">
+      <a href="./" class="logo-group">
+        <div class="logo-icon-box">
+          <picture>
+            <source srcset="assets/smart-binary-mark.webp" type="image/webp">
+            <img src="assets/smart-binary-mark.png" alt="לוגו Smart Gemini Hub" onerror="this.style.display='none'; document.getElementById('fallbackSparkle').style.display='block';">
+          </picture>
+          <svg id="fallbackSparkle" viewBox="0 0 24 24" style="display:none;">
+            <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <div class="logo-brand-name" dir="ltr">
+            <span class="text-gradient-silver">SMART</span>
+            <span class="text-gradient-gold">GEMINI</span>
+            <span style="font-size: 0.85rem; color: var(--brand-silver); font-weight: 500;">HUB</span>
+          </div>
+          <span class="sub">לוח שיתוף מנויי Google One</span>
+        </div>
+      </a>
+
+      <div class="header-actions">
+        <button class="btn btn-outline" id="openFaqBtn" title="מידע על פרטיות ושיתוף משפחתי">
+          <span>❓</span>
+          <span class="hidden-xs">איך עובד שיתוף?</span>
+        </button>
+        <button class="btn btn-primary" id="openNewPostBtn">
+          <span>➕</span>
+          <span>פרסם מודעה</span>
+        </button>
+        <button class="btn btn-outline" id="openNewGroupBtn" style="border-color: rgba(212, 175, 55, 0.4);">
+          <span>👥</span>
+          <span>פתח קבוצה</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero-section">
+    <div class="hero-aura"></div>
+    <div class="hero-content">
+      
+      <!-- Category Pill -->
+      <div class="badge-pill">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--brand-gold-glow); display: inline-block; animation: pulse 2s infinite;"></span>
+        <span>קהילת שיתוף מנויי Google One & Gemini Advanced בישראל</span>
+      </div>
+
+      <!-- Official Logo Presentation (Smart Binary Design Identity) -->
+      <div class="hero-logo-plate">
+        <picture>
+          <source srcset="assets/smart-binary-logo.webp" type="image/webp">
+          <img src="assets/smart-binary-logo.png" alt="Smart Binary Logo" width="637" height="403" class="hero-brand-logo">
+        </picture>
+      </div>
+
+      <h1 class="hero-title">
+        <span class="text-gradient-silver">חולקים מנוי Gemini Advanced</span><br>
+        <span class="text-gradient-gold">בכיף, בקלות ובפרטיות מלאה</span>
+      </h1>
+
+      <p class="hero-subtitle">
+        לוח קהילתי ישיר למציאת שותפים לשיתוף משפחתי בגוגל. יש לכם מקום פנוי? מחפשים להצטרף למישהו?
+        השאירו פרטים, פנו ישירות במייל, ושמרו על 100% פרטיות.
+      </p>
+
+      <!-- Live Stats Bar (Primary focus on offers and seekers) -->
+      <div class="stats-bar" id="statsBar">
+        <div class="stat-item glass-card">
+          <span>🌟</span>
+          <span>מציעים מנוי:</span>
+          <strong class="stat-number" id="offersCount">0</strong>
+        </div>
+        <div class="stat-item glass-card">
+          <span>🔍</span>
+          <span>מחפשים להצטרף:</span>
+          <strong class="stat-number" id="requestsCount">0</strong>
+        </div>
+        <div class="stat-item glass-card">
+          <span>👥</span>
+          <span>קבוצות:</span>
+          <strong class="stat-number" id="groupsCount">0</strong>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Main Content Area -->
+  <main class="main-content">
+
+    <!-- View Switcher Tabs (Offers first by default!) -->
+    <div class="section-switcher-container">
+      <div class="section-switcher glass-panel" role="tablist">
+        <button class="switch-tab-btn active" id="tabOffersBtn" data-view="offers" role="tab" aria-selected="true">
+          <span>🌟</span>
+          <span>מציעים מנוי</span>
+        </button>
+        <button class="switch-tab-btn" id="tabRequestsBtn" data-view="requests" role="tab" aria-selected="false">
+          <span>🔍</span>
+          <span>מחפשים מנוי</span>
+        </button>
+        <button class="switch-tab-btn" id="tabAllBtn" data-view="all" role="tab" aria-selected="false">
+          <span>🌐</span>
+          <span>הכל</span>
+        </button>
+        <button class="switch-tab-btn" id="tabGroupsBtn" data-view="groups" role="tab" aria-selected="false">
+          <span>👥</span>
+          <span>קבוצות שיתוף (5+1)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter & Search Toolbar -->
+    <div class="filter-card glass-panel">
+      <div class="filter-row">
+        <!-- Search Input -->
+        <div class="search-box">
+          <span class="search-icon">🔎</span>
+          <input type="text" id="searchInput" placeholder="חיפוש לפי שם, מייל, כינוי בפורום או הערה...">
+        </div>
+
+        <!-- Filter Chips for Posts (Cost) -->
+        <div class="cost-filter-group" id="postsCostFilters">
+          <span class="filter-label">עלות:</span>
+          <button class="cost-chip active" data-cost="all">הכל</button>
+          <button class="cost-chip" data-cost="free">🎁 חינם</button>
+          <button class="cost-chip" data-cost="paid">💳 חלוקת עלויות</button>
+        </div>
+
+        <!-- Filter Chips for Groups (Discounts / Status) -->
+        <div class="cost-filter-group" id="groupsFilters" style="display: none;">
+          <span class="filter-label">סינון קבוצות:</span>
+          <button class="cost-chip active" data-group-filter="all">הכל</button>
+          <button class="cost-chip" data-group-filter="discount">🎓 הנחת סטודנט/מוזל</button>
+          <button class="cost-chip" data-group-filter="open">⚡ פתוחות בלבד</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content Feed Container -->
+    <div id="contentFeed">
+      <div class="posts-grid" id="itemsGrid">
+        <div class="empty-state glass-card">
+          <div class="empty-icon">⏳</div>
+          <h3>טוען מודעות מהלוח...</h3>
+          <p>בודק נתונים מול השרת המקומי.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="footer-container">
+      <p>
+        <strong>Gemini Share Hub</strong> • לוח קהילתי עצמאי לחיבור בין משתמשים.
+      </p>
+      <p style="margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-muted);">
+        השיתוף מתבצע על גבי תוכנית השיתוף המשפחתי הרשמית של Google One. כל חשבון שומר על פרטיות מוחלטת ב-100%.
+      </p>
+    </div>
+  </footer>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- Modal: New Individual Post (מודעה אישית) -->
+  <div class="modal-backdrop" id="newPostModal">
+    <div class="modal-box glass-panel">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">פרסום מודעה בלוח</h2>
+        <button class="close-btn" data-close="newPostModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="newPostForm">
+          <!-- Honeypot -->
+          <input type="text" name="website" style="display:none;" tabindex="-1" autocomplete="off">
+
+          <div class="form-group">
+            <label class="form-label"><span class="req">*</span> סוג המודעה</label>
+            <div class="radio-cards">
+              <label class="radio-card selected" id="optOffer">
+                <input type="radio" name="type" value="offer" checked>
+                <div>🌟 יש לי מקום פנוי במנוי</div>
+              </label>
+              <label class="radio-card" id="optRequest">
+                <input type="radio" name="type" value="request">
+                <div>🔍 אני מחפש להצטרף למנוי</div>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="postName">שם או כינוי (אופציונלי)</label>
+            <input type="text" id="postName" name="name" class="form-control" placeholder="למשל: דני">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="postForumUser">שם משתמש במתמחים טופ / בינה טופ (אופציונלי)</label>
+            <input type="text" id="postForumUser" name="forum_user" class="form-control" placeholder="הכינוי שלך בפורום (למשל: eli_dev)" dir="ltr" style="text-align: right;">
+            <div class="pin-input-help">מוסיף תגית זיהוי קהילתית לכרטיס המודעה שלך</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="postEmail"><span class="req">*</span> כתובת אימייל של גוגל</label>
+            <input type="email" id="postEmail" name="email" class="form-control" required placeholder="yourname@gmail.com" dir="ltr" style="text-align: right;">
+            <div class="pin-input-help">הכתובת אליה ישלחו לך הזמנה או יפנו אליך במייל</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label"><span class="req">*</span> סוג עלות</label>
+            <div class="radio-cards">
+              <label class="radio-card selected" id="optFree">
+                <input type="radio" name="cost_type" value="free" checked>
+                <div>🎁 חינם (ללא תשלום)</div>
+              </label>
+              <label class="radio-card" id="optPaid">
+                <input type="radio" name="cost_type" value="paid">
+                <div>💳 חלוקת עלויות (השתתפות)</div>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="postNotes">הערה חופשית</label>
+            <textarea id="postNotes" name="notes" class="form-control" placeholder="למשל: כמה מקומות פנויים, שימוש מועדף, שעות מענה וכו'..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="postPin"><span class="req">*</span> קוד סודי אישי למחיקה (PIN)</label>
+            <input type="password" id="postPin" name="pin" class="form-control" required minlength="4" maxlength="10" placeholder="4 ספרות לפחות (למשל: 1234)">
+            <div class="pin-input-help">שמור קוד זה! בעזרתו תוכל להסיר את המודעה ברגע שתמצא שיתוף.</div>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="submitPostBtn">
+              פרסם מודעה עכשיו
+            </button>
+            <button type="button" class="btn btn-outline" data-close="newPostModal">
+              ביטול
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: New Group (פתיחת קבוצת שיתוף עם כל ההגדרות) -->
+  <div class="modal-backdrop" id="newGroupModal">
+    <div class="modal-box glass-panel">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">פתיחת קבוצת שיתוף (5 מקומות)</h2>
+        <button class="close-btn" data-close="newGroupModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="newGroupForm">
+          <!-- Honeypot -->
+          <input type="text" name="website" style="display:none;" tabindex="-1" autocomplete="off">
+
+          <div class="form-group">
+            <label class="form-label" for="groupTitle">כותרת הקבוצה (אופציונלי)</label>
+            <input type="text" id="groupTitle" name="title" class="form-control" placeholder="למשל: קבוצה למנוי שנתי לחלוקת עלויות שווה">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupManagerName"><span class="req">*</span> שם המנהל (יוצר הקבוצה)</label>
+            <input type="text" id="groupManagerName" name="manager_name" class="form-control" required placeholder="השם שלך">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupManagerEmail"><span class="req">*</span> כתובת אימייל (של גוגל)</label>
+            <input type="email" id="groupManagerEmail" name="manager_email" class="form-control" required placeholder="manager@gmail.com" dir="ltr" style="text-align: right;">
+            <div class="pin-input-help">המייל ממנו תישלח הזמנת ה-Google Family</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupManagerForum">שם משתמש במתמחים טופ / בינה טופ (אופציונלי)</label>
+            <input type="text" id="groupManagerForum" name="manager_forum_user" class="form-control" placeholder="הכינוי שלך בפורום (למשל: master_ai)" dir="ltr" style="text-align: right;">
+          </div>
+
+          <!-- Discount / Student Badge Toggle -->
+          <div class="form-group discount-config-box">
+            <label class="checkbox-card">
+              <input type="checkbox" id="groupHasDiscount" name="has_discount">
+              <span style="font-weight: 700; color: var(--brand-gold);">🎓 זכאות למחיר מוזל (הנחת סטודנט / מבצע מיוחד)</span>
+            </label>
+            <div id="discountDetailsBox" style="display: none; margin-top: 0.75rem;">
+              <label class="form-label" for="groupDiscountLabel">פירוט ההנחה (יוצג בכותרת)</label>
+              <input type="text" id="groupDiscountLabel" name="discount_label" class="form-control" placeholder="למשל: הנחת סטודנט / מבצע גוגל 50%">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupCost">עלות משוערת לכל חבר</label>
+            <input type="text" id="groupCost" name="cost_per_member" class="form-control" placeholder="למשל: 25 ש&quot;ח לחודש / 250 ש&quot;ח לשנה">
+          </div>
+
+          <!-- Prepay Option (תשלום מראש למספר חודשים) -->
+          <div class="form-group prepay-config-box">
+            <label class="checkbox-card">
+              <input type="checkbox" id="groupPrepayRequired" name="prepay_required">
+              <span>📅 נדרש תשלום מראש עבור מספר חודשים</span>
+            </label>
+            <div id="prepayDetailsBox" style="display: none; margin-top: 0.75rem;">
+              <label class="form-label" for="groupPrepayMonths">עבור כמה חודשים מראש נדרש התשלום?</label>
+              <input type="number" id="groupPrepayMonths" name="prepay_months" class="form-control" min="1" max="24" value="3" placeholder="3">
+              <div class="pin-input-help">יוצג בצורה בולטת בכרטיס הקבוצה</div>
+            </div>
+          </div>
+
+          <!-- Approval Option (האם נדרש אישור כניסה) -->
+          <div class="form-group">
+            <label class="checkbox-card">
+              <input type="checkbox" id="groupRequireApproval" name="require_approval">
+              <span>🔒 דרוש אישור מנהל להצטרפות (כל מצטרף ימתין לאישורך בפאנל הניהול)</span>
+            </label>
+          </div>
+
+          <!-- Privacy Option (האם פרטי משתתפים חסויים) -->
+          <div class="form-group">
+            <label class="checkbox-card">
+              <input type="checkbox" id="groupPrivateMembers" name="private_members">
+              <span>👁️‍🗨️ פרטי המשתתפים חסויים למי שאינו חבר (לא יוצגו מיילים ושמות ברבים)</span>
+            </label>
+          </div>
+
+          <!-- Requirements (תנאים להצטרפות) -->
+          <div class="form-group">
+            <label class="form-label" for="groupRequirements">תנאים להצטרפות (אופציונלי)</label>
+            <textarea id="groupRequirements" name="requirements" class="form-control" placeholder="למשל: חבר פעיל בפורום, שימוש אישי בלבד, תשלום בביט תוך 24 שעות..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupNotes">הערות כלליות</label>
+            <textarea id="groupNotes" name="notes" class="form-control" placeholder="פרטים נוספים לגבי הקבוצה..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="groupPin"><span class="req">*</span> קוד ניהול סודי לקבוצה (PIN)</label>
+            <input type="password" id="groupPin" name="pin" class="form-control" required minlength="4" maxlength="10" placeholder="4 ספרות לפחות (למשל: 4321)">
+            <div class="pin-input-help">קוד זה ישמש אותך לאישור חברים, הוצאת משתתפים, או סגירת הקבוצה.</div>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="submitGroupBtn">
+              פתח קבוצה עכשיו
+            </button>
+            <button type="button" class="btn btn-outline" data-close="newGroupModal">
+              ביטול
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Join Group (הצטרפות לקבוצה) -->
+  <div class="modal-backdrop" id="joinGroupModal">
+    <div class="modal-box glass-panel" style="max-width: 480px;">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">הצטרפות לקבוצה</h2>
+        <button class="close-btn" data-close="joinGroupModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="joinGroupIntroText" style="margin-bottom: 1rem; color: var(--brand-silver); font-size: 0.95rem;">
+          הזן את פרטיך לתפיסת מקום בקבוצה:
+        </p>
+        <form id="joinGroupForm">
+          <input type="hidden" id="joinGroupId">
+
+          <div class="form-group">
+            <label class="form-label" for="joinMemberName"><span class="req">*</span> שם או כינוי</label>
+            <input type="text" id="joinMemberName" name="member_name" class="form-control" required placeholder="שמך">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="joinMemberEmail"><span class="req">*</span> כתובת אימייל של גוגל</label>
+            <input type="email" id="joinMemberEmail" name="member_email" class="form-control" required placeholder="yourname@gmail.com" dir="ltr" style="text-align: right;">
+            <div class="pin-input-help">מנהל הקבוצה ישלח אליך הזמנת Google Family למייל זה</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="joinMemberForum">שם משתמש במתמחים טופ / בינה טופ (אופציונלי)</label>
+            <input type="text" id="joinMemberForum" name="member_forum_user" class="form-control" placeholder="הכינוי שלך בפורום" dir="ltr" style="text-align: right;">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="joinNotes">הערה למנהל הקבוצה (אופציונלי)</label>
+            <textarea id="joinNotes" name="notes" class="form-control" placeholder="למשל: תודה! אעביר תשלום מיד בביט."></textarea>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 1.25rem;">
+            <button type="submit" class="btn btn-primary" style="flex: 1;" id="confirmJoinBtn">
+              שלח בקשת הצטרפות
+            </button>
+            <button type="button" class="btn btn-outline" data-close="joinGroupModal">
+              ביטול
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Manager Group Admin Panel (פאנל ניהול קבוצה למנהל עם הוצאת חברים ואישורים) -->
+  <div class="modal-backdrop" id="groupAdminModal">
+    <div class="modal-box glass-panel" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">⚙️ ניהול קבוצה ע"י המנהל</h2>
+        <button class="close-btn" data-close="groupAdminModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Step 1: PIN Prompt -->
+        <div id="adminPinStep">
+          <p style="margin-bottom: 1rem; color: var(--brand-silver);">
+            הזן את קוד ה-PIN הסודי שהגדרת בעת פתיחת הקבוצה כדי לצפות בפרטי המשתתפים ולנהל אותם:
+          </p>
+          <form id="adminPinForm">
+            <input type="hidden" id="adminGroupId">
+            <div class="form-group">
+              <label class="form-label" for="adminPinInput">קוד ניהול (PIN)</label>
+              <input type="password" id="adminPinInput" class="form-control" required placeholder="הזן קוד סודי">
+            </div>
+            <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+              <button type="submit" class="btn btn-primary" style="flex: 1;" id="adminPinSubmitBtn">
+                כניסה לניהול
+              </button>
+              <button type="button" class="btn btn-outline" data-close="groupAdminModal">
+                ביטול
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Step 2: Management Dashboard -->
+        <div id="adminDashboardStep" style="display: none;">
+          <h3 id="adminGroupTitle" style="color: var(--brand-gold); margin-bottom: 0.5rem; font-size: 1.15rem;"></h3>
+          <p id="adminGroupStats" style="color: var(--brand-silver); font-size: 0.9rem; margin-bottom: 1.25rem;"></p>
+
+          <!-- Pending Approvals Section -->
+          <div id="adminPendingSection" style="display: none; margin-bottom: 1.5rem;">
+            <h4 style="color: var(--brand-gold-glow); font-size: 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>⏳</span>
+              <span>ממתינים לאישורך:</span>
+            </h4>
+            <div id="adminPendingList" class="admin-members-list"></div>
+          </div>
+
+          <!-- Approved Members Section -->
+          <div style="margin-bottom: 1.5rem;">
+            <h4 style="color: var(--brand-silver); font-size: 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>👥</span>
+              <span>חברי הקבוצה הפעילים:</span>
+            </h4>
+            <div id="adminMembersList" class="admin-members-list"></div>
+          </div>
+
+          <!-- Group Actions (Close, Reopen, Delete) -->
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.25rem;">
+            <button class="btn btn-outline" id="adminToggleCloseBtn" style="flex: 1;">
+              סגור/פתח קבוצה
+            </button>
+            <button class="btn btn-danger" id="adminDeleteGroupBtn" style="flex: 1;">
+              🗑️ מחק קבוצה
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Delete Post (הסרת מודעה אישית) -->
+  <div class="modal-backdrop" id="deletePostModal">
+    <div class="modal-box glass-panel" style="max-width: 420px;">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">הסרת מודעה</h2>
+        <button class="close-btn" data-close="deletePostModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom: 1rem; color: var(--brand-silver);">
+          כדי להסיר את המודעה מהלוח, הזן את קוד ה-PIN הסודי שהגדרת בעת הפרסום:
+        </p>
+        <form id="deletePostForm">
+          <input type="hidden" id="deletePostId">
+          <div class="form-group">
+            <label class="form-label" for="deletePin">קוד סודי (PIN)</label>
+            <input type="password" id="deletePin" class="form-control" required placeholder="הזן 4 ספרות">
+          </div>
+          <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+            <button type="submit" class="btn btn-danger" style="flex: 1;" id="confirmDeleteBtn">
+              מחק מודעה
+            </button>
+            <button type="button" class="btn btn-outline" data-close="deletePostModal">
+              ביטול
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: FAQ & Privacy Guide -->
+  <div class="modal-backdrop" id="faqModal">
+    <div class="modal-box glass-panel" style="max-width: 620px;">
+      <div class="modal-header">
+        <h2 class="text-gradient-gold">איך עובד שיתוף משפחתי בגוגל?</h2>
+        <button class="close-btn" data-close="faqModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <div class="faq-card glass-card">
+          <h3>🔒 האם החברים בקבוצה רואים את הקבצים או המיילים שלי?</h3>
+          <p>
+            <strong>ממש לא!</strong> שיתוף משפחתי של Google שומר על פרטיות מוחלטת ב-100%. 
+            אף חבר בקבוצה לא רואה את ה-Gmail, Google Drive, Google Photos, או היסטוריית השיחות שלך ב-Gemini.
+            כל חשבון מבודד ועצמאי לחלוטין.
+          </p>
+        </div>
+
+        <div class="faq-card glass-card">
+          <h3>👥 כמה אנשים יכולים להצטרף למנוי?</h3>
+          <p>
+            בעל המנוי יכול לשתף את המנוי עם עד <strong>5 אנשים נוספים</strong> (סה"כ 6 חברים בקבוצת המשפחה).
+            כל אחד מהם מקבל גישה מלאה ל-Gemini Advanced.
+          </p>
+        </div>
+
+        <div class="faq-card glass-card">
+          <h3>✉️ איך בעל המנוי מצרף שותף?</h3>
+          <p>
+            1. בעל המנוי נכנס אל <a href="https://families.google.com" target="_blank" style="color: var(--brand-gold); font-weight: 700;">families.google.com</a>.<br>
+            2. לוחץ על "הזמן בני משפחה" ומזין את כתובת הג'ימייל של השותף.<br>
+            3. השותף מקבל הזמנה במייל, לוחץ על "הצטרפות", ומיד המנוי פעיל אצלו!
+          </p>
+        </div>
+
+        <div class="faq-card glass-card">
+          <h3>⚡ מה מקבל מי שמצטרף?</h3>
+          <p>
+            גישה מלאה לכל יכולות <strong>Gemini Advanced</strong> (מודלי Gemini Pro האחרונים עם חלון הקשר עצום), יצירת תמונות באיכות גבוהה, נפח אחסון מוגדל (עד 2TB משותף לקבוצה) ועוד.
+          </p>
+        </div>
+
+        <div class="faq-card glass-card">
+          <h3>🛑 האם אפשר לעזוב או להסיר חבר?</h3>
+          <p>
+            כן. מנהל המשפחה יכול להסיר חבר בכל רגע, וחבר יכול לעזוב את הקבוצה מתי שירצה בהגדרות החשבון.
+          </p>
+        </div>
+
+        <div style="text-align: center; margin-top: 1rem;">
+          <button class="btn btn-primary" data-close="faqModal" style="width: 100%;">
+            הבנתי, תודה!
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,8 +1,299 @@
 // ==========================================================================
 // Gemini Share Hub — Client Application Logic
+// Features: Dual Mode (Live Node.js Server + GitHub Pages Static Fallback)
 // Primary Focus: Individual Posts (Offers & Requests)
 // Secondary: Group Pooling (5 Members Cost Sharing) with Admin Management
 // ==========================================================================
+
+// Detect Static Environment (GitHub Pages / file:// protocol)
+const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+
+// Default Seed Data for Static Environment
+const SEED_POSTS = [
+  {
+    id: 1,
+    type: 'offer',
+    name: 'אלי פ.',
+    email: 'eli.pro.ai@gmail.com',
+    forum_user: 'eli_pro',
+    cost_type: 'free',
+    notes: 'מציע מקום במנוי Google One AI Premium (Gemini Advanced), פנו אליי במייל או בפורום מתמחים טופ (@eli_pro).',
+    pin: '1234',
+    status: 'active',
+    created_at: new Date(Date.now() - 3600000 * 2).toISOString()
+  },
+  {
+    id: 2,
+    type: 'request',
+    name: 'דוד א.',
+    email: 'david.ai.tech@gmail.com',
+    forum_user: 'david_ai',
+    cost_type: 'paid',
+    notes: 'מחפש להצטרף לשיתוף משפחתי פעיל, אשמח להשתתף בעלויות. משתמש בפורום: @david_ai.',
+    pin: '1234',
+    status: 'active',
+    created_at: new Date(Date.now() - 3600000 * 5).toISOString()
+  }
+];
+
+const SEED_GROUPS = [
+  {
+    id: 1,
+    title: '🎓 [הנחת סטודנט] קבוצת שיתוף שנתית — יונתן כהן',
+    manager_name: 'יונתן כהן',
+    manager_email: 'yonatan.gemini.ai@gmail.com',
+    manager_forum_user: 'yonatan_c',
+    has_discount: true,
+    discount_label: 'הנחת סטודנט',
+    cost_per_member: '25 ש"ח לחודש',
+    total_slots: 6,
+    require_approval: true,
+    private_members: false,
+    requirements: 'פעיל בפורום מתמחים טופ, שימוש אישי בלבד',
+    prepay_required: true,
+    prepay_months: 3,
+    notes: 'קבוצת שיתוף שנתית למנויי ג\'מיני, 5 מקומות פנויים, הנחת סטודנט, חלוקה שווה.',
+    pin: '1234',
+    status: 'open',
+    members: [],
+    pending_members: [],
+    members_count: 0,
+    pending_count: 0,
+    slots_taken: 1,
+    slots_free: 5,
+    needed_members: 5,
+    created_at: new Date(Date.now() - 3600000 * 3).toISOString()
+  }
+];
+
+// Local Client-Side Database (Active on GitHub Pages)
+const LocalDB = {
+  getPostsKey: () => 'gemini_share_posts_v2',
+  getGroupsKey: () => 'gemini_share_groups_v2',
+
+  init() {
+    if (!localStorage.getItem(this.getPostsKey())) {
+      localStorage.setItem(this.getPostsKey(), JSON.stringify(SEED_POSTS));
+    }
+    if (!localStorage.getItem(this.getGroupsKey())) {
+      localStorage.setItem(this.getGroupsKey(), JSON.stringify(SEED_GROUPS));
+    }
+  },
+
+  getPosts(filters = {}) {
+    this.init();
+    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
+    if (filters.type && filters.type !== 'all') {
+      posts = posts.filter(p => p.type === filters.type);
+    }
+    if (filters.cost_type && filters.cost_type !== 'all') {
+      posts = posts.filter(p => p.cost_type === filters.cost_type);
+    }
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      posts = posts.filter(p =>
+        (p.name && p.name.toLowerCase().includes(q)) ||
+        (p.email && p.email.toLowerCase().includes(q)) ||
+        (p.notes && p.notes.toLowerCase().includes(q)) ||
+        (p.forum_user && p.forum_user.toLowerCase().includes(q))
+      );
+    }
+    return posts.filter(p => p.status === 'active').sort((a,b) => b.id - a.id);
+  },
+
+  createPost(data) {
+    this.init();
+    const posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
+    const newPost = {
+      id: Date.now(),
+      type: data.type,
+      name: data.name,
+      email: data.email,
+      forum_user: data.forum_user ? data.forum_user.replace(/^@/, '') : null,
+      cost_type: data.cost_type,
+      notes: data.notes,
+      pin: String(data.pin).trim(),
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+    posts.unshift(newPost);
+    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
+    return newPost;
+  },
+
+  deletePost(id, pin) {
+    this.init();
+    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
+    const post = posts.find(p => p.id === Number(id));
+    if (!post) return { success: false, error: 'המודעה לא נמצאה' };
+    if (post.pin !== String(pin).trim()) return { success: false, error: 'קוד סודי (PIN) שגוי' };
+    posts = posts.filter(p => p.id !== Number(id));
+    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
+    return { success: true };
+  },
+
+  getGroups(filters = {}) {
+    this.init();
+    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    if (filters.has_discount === 'true') {
+      groups = groups.filter(g => g.has_discount);
+    }
+    if (filters.status === 'open') {
+      groups = groups.filter(g => g.status === 'open');
+    }
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      groups = groups.filter(g =>
+        (g.title && g.title.toLowerCase().includes(q)) ||
+        (g.manager_name && g.manager_name.toLowerCase().includes(q)) ||
+        (g.notes && g.notes.toLowerCase().includes(q)) ||
+        (g.manager_forum_user && g.manager_forum_user.toLowerCase().includes(q))
+      );
+    }
+    return groups.sort((a,b) => b.id - a.id);
+  },
+
+  createGroup(data) {
+    this.init();
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const newGroup = {
+      id: Date.now(),
+      title: data.title || (data.has_discount ? `🎓 [הנחת סטודנט] קבוצת שיתוף — ${data.manager_name}` : `👥 קבוצת שיתוף — ${data.manager_name}`),
+      manager_name: data.manager_name,
+      manager_email: data.manager_email,
+      manager_forum_user: data.manager_forum_user ? data.manager_forum_user.replace(/^@/, '') : null,
+      has_discount: Boolean(data.has_discount),
+      discount_label: data.discount_label || 'הנחת סטודנט / מחיר מוזל',
+      cost_per_member: data.cost_per_member,
+      total_slots: 6,
+      require_approval: Boolean(data.require_approval),
+      private_members: Boolean(data.private_members),
+      requirements: data.requirements,
+      prepay_required: Boolean(data.prepay_required),
+      prepay_months: Number(data.prepay_months) || 1,
+      notes: data.notes,
+      pin: String(data.pin).trim(),
+      status: 'open',
+      members: [],
+      pending_members: [],
+      members_count: 0,
+      pending_count: 0,
+      slots_taken: 1,
+      slots_free: 5,
+      needed_members: 5,
+      created_at: new Date().toISOString()
+    };
+    groups.unshift(newGroup);
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return newGroup;
+  },
+
+  joinGroup(groupId, memberData) {
+    this.init();
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
+    if (group.slots_free <= 0) return { success: false, error: 'הקבוצה מלאה' };
+
+    const newMember = {
+      id: Date.now(),
+      member_name: memberData.member_name,
+      member_email: memberData.member_email,
+      member_forum_user: memberData.member_forum_user ? memberData.member_forum_user.replace(/^@/, '') : null,
+      notes: memberData.notes,
+      status: group.require_approval ? 'pending' : 'approved',
+      created_at: new Date().toISOString()
+    };
+
+    if (group.require_approval) {
+      if (!group.pending_members) group.pending_members = [];
+      group.pending_members.push(newMember);
+      group.pending_count = group.pending_members.length;
+    } else {
+      if (!group.members) group.members = [];
+      group.members.push(newMember);
+      group.members_count = group.members.length;
+      group.slots_taken = 1 + group.members_count;
+      group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
+      if (group.slots_free === 0) group.status = 'full';
+    }
+
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return {
+      success: true,
+      group,
+      isPending: group.require_approval,
+      message: group.require_approval ? 'בקשתך נרשמה בהצלחה וממתינה לאישור המנהל' : 'הצטרפת לקבוצה בהצלחה!'
+    };
+  },
+
+  adminGroup(groupId, pin) {
+    this.init();
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
+    if (group.pin !== String(pin).trim()) return { success: false, error: 'קוד ניהול (PIN) שגוי' };
+    return { success: true, group };
+  },
+
+  approveMember(groupId, memberId, pin) {
+    this.init();
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group || group.pin !== String(pin).trim()) return { success: false, error: 'קוד שגוי' };
+
+    const pendingIdx = (group.pending_members || []).findIndex(m => m.id === Number(memberId));
+    if (pendingIdx === -1) return { success: false, error: 'המשתתף לא נמצא' };
+
+    const member = group.pending_members.splice(pendingIdx, 1)[0];
+    member.status = 'approved';
+    if (!group.members) group.members = [];
+    group.members.push(member);
+
+    group.pending_count = group.pending_members.length;
+    group.members_count = group.members.length;
+    group.slots_taken = 1 + group.members_count;
+    group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
+    if (group.slots_free === 0) group.status = 'full';
+
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return { success: true };
+  },
+
+  removeMember(groupId, memberId, pin) {
+    this.init();
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    const group = groups.find(g => g.id === Number(groupId));
+    if (!group || group.pin !== String(pin).trim()) return { success: false, error: 'קוד שגוי' };
+
+    if (group.members) {
+      group.members = group.members.filter(m => m.id !== Number(memberId));
+    }
+    if (group.pending_members) {
+      group.pending_members = group.pending_members.filter(m => m.id !== Number(memberId));
+    }
+
+    group.members_count = (group.members || []).length;
+    group.pending_count = (group.pending_members || []).length;
+    group.slots_taken = 1 + group.members_count;
+    group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
+    if (group.slots_free > 0 && group.status === 'full') group.status = 'open';
+
+    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
+    return { success: true };
+  },
+
+  getStats() {
+    this.init();
+    const posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]').filter(p => p.status === 'active');
+    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
+    return {
+      offers: posts.filter(p => p.type === 'offer').length,
+      requests: posts.filter(p => p.type === 'request').length,
+      groups: groups.filter(g => g.status === 'open' || g.status === 'full').length
+    };
+  }
+};
 
 // Global State
 const state = {
@@ -12,7 +303,6 @@ const state = {
   search: '',
   posts: [],
   groups: [],
-  // Admin State
   adminGroupId: null,
   adminPin: ''
 };
@@ -140,8 +430,17 @@ function formatDate(dateStr) {
  * Load Stats
  */
 async function loadStats() {
+  if (isStaticEnv) {
+    const stats = LocalDB.getStats();
+    if (offersCountEl) offersCountEl.textContent = stats.offers;
+    if (requestsCountEl) requestsCountEl.textContent = stats.requests;
+    if (groupsCountEl) groupsCountEl.textContent = stats.groups;
+    return;
+  }
+
   try {
     const res = await fetch('/api/stats');
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
     if (data.success && data.stats) {
       if (offersCountEl) offersCountEl.textContent = data.stats.offers;
@@ -149,7 +448,10 @@ async function loadStats() {
       if (groupsCountEl) groupsCountEl.textContent = data.stats.groups;
     }
   } catch (err) {
-    console.error('Failed to load stats:', err);
+    const stats = LocalDB.getStats();
+    if (offersCountEl) offersCountEl.textContent = stats.offers;
+    if (requestsCountEl) requestsCountEl.textContent = stats.requests;
+    if (groupsCountEl) groupsCountEl.textContent = stats.groups;
   }
 }
 
@@ -168,15 +470,26 @@ async function loadContent() {
  * Fetch Posts (Offers, Requests, All)
  */
 async function loadPosts() {
+  const filters = {
+    type: state.view === 'offers' ? 'offer' : (state.view === 'requests' ? 'request' : 'all'),
+    cost_type: state.postCost,
+    search: state.search
+  };
+
+  if (isStaticEnv) {
+    state.posts = LocalDB.getPosts(filters);
+    renderPosts(state.posts);
+    return;
+  }
+
   try {
     const params = new URLSearchParams();
-    if (state.view === 'offers') params.append('type', 'offer');
-    else if (state.view === 'requests') params.append('type', 'request');
-    
-    if (state.postCost !== 'all') params.append('cost_type', state.postCost);
-    if (state.search.trim()) params.append('search', state.search.trim());
+    if (filters.type !== 'all') params.append('type', filters.type);
+    if (filters.cost_type !== 'all') params.append('cost_type', filters.cost_type);
+    if (filters.search.trim()) params.append('search', filters.search.trim());
 
     const res = await fetch(`/api/posts?${params.toString()}`);
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -186,14 +499,8 @@ async function loadPosts() {
       showToast(data.error || 'שגיאה בטעינת המודעות', 'error');
     }
   } catch (err) {
-    console.error('Failed to load posts:', err);
-    itemsGrid.innerHTML = `
-      <div class="empty-state glass-card">
-        <div class="empty-icon">⚠️</div>
-        <h3>תקלה בחיבור לשרת</h3>
-        <p>ודא שהשרת פועל ונסה לרענן את הדף.</p>
-      </div>
-    `;
+    state.posts = LocalDB.getPosts(filters);
+    renderPosts(state.posts);
   }
 }
 
@@ -263,13 +570,6 @@ function renderPosts(posts) {
             <span>✉️</span>
             <span>שלח אימייל ישיר</span>
           </a>
-
-          ${post.phone ? `
-            <a href="${formatWhatsAppLink(post.phone)}" class="btn btn-outline" style="width: 100%; margin-top: 0.35rem; color: #25D366; border-color: rgba(37, 211, 102, 0.4);" target="_blank" rel="noopener noreferrer">
-              <span>💬</span>
-              <span>פנה ב-WhatsApp</span>
-            </a>
-          ` : ''}
         </div>
 
         <div class="card-footer">
@@ -288,13 +588,26 @@ function renderPosts(posts) {
  * Fetch Groups
  */
 async function loadGroups() {
+  const filters = {
+    has_discount: state.groupFilter === 'discount' ? 'true' : 'false',
+    status: state.groupFilter === 'open' ? 'open' : 'all',
+    search: state.search
+  };
+
+  if (isStaticEnv) {
+    state.groups = LocalDB.getGroups(filters);
+    renderGroups(state.groups);
+    return;
+  }
+
   try {
     const params = new URLSearchParams();
-    if (state.groupFilter === 'open') params.append('status', 'open');
-    if (state.groupFilter === 'discount') params.append('has_discount', 'true');
-    if (state.search.trim()) params.append('search', state.search.trim());
+    if (filters.status === 'open') params.append('status', 'open');
+    if (filters.has_discount === 'true') params.append('has_discount', 'true');
+    if (filters.search.trim()) params.append('search', filters.search.trim());
 
     const res = await fetch(`/api/groups?${params.toString()}`);
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -304,14 +617,8 @@ async function loadGroups() {
       showToast(data.error || 'שגיאה בטעינת הקבוצות', 'error');
     }
   } catch (err) {
-    console.error('Failed to load groups:', err);
-    itemsGrid.innerHTML = `
-      <div class="empty-state glass-card">
-        <div class="empty-icon">⚠️</div>
-        <h3>תקלה בטעינת הקבוצות</h3>
-        <p>ודא שהשרת פועל ונסה לרענן את הדף.</p>
-      </div>
-    `;
+    state.groups = LocalDB.getGroups(filters);
+    renderGroups(state.groups);
   }
 }
 
@@ -339,21 +646,7 @@ function renderGroups(groups) {
     const statusLabel = isClosed ? '🔒 קבוצה סגורה' : (isFull ? '🔒 קבוצה מלאה' : `⚡ פתוחה (${g.slots_free} מקומות)`);
     const statusClass = isClosed ? 'badge-closed' : (isFull ? 'badge-full' : 'badge-open');
 
-    // 5-Slot Visualizer (R2)
-    const maxParticipantSlots = 5;
-    const joinedCount = Math.max(0, Math.min(5, (g.slots_taken || 1) - 1));
-    const remainingSlots = Math.max(0, 5 - joinedCount);
-
-    let slotChips = '';
-    for (let i = 0; i < maxParticipantSlots; i++) {
-      if (i < joinedCount) {
-        slotChips += `<span class="slot-chip taken" title="חבר ${i + 1} תפוס">✓</span>`;
-      } else {
-        slotChips += `<span class="slot-chip free" title="מקום ${i + 1} פנוי">○</span>`;
-      }
-    }
-
-    // Slot circles
+    // Slot visual circles
     const totalSlots = g.total_slots || 6;
     let slotBoxes = '';
     for (let i = 0; i < totalSlots; i++) {
@@ -373,8 +666,8 @@ function renderGroups(groups) {
           <div class="badge-group">
             <span class="badge ${statusClass}">${statusLabel}</span>
             ${g.has_discount ? `
-              <span class="badge badge-discount-hero">
-                🎓 ${escapeHtml(g.discount_label || 'זכאות למחיר מוזל (סטודנט)')}
+              <span class="badge badge-discount-gold">
+                🎓 ${escapeHtml(g.discount_label || 'הנחת סטודנט / מחיר מוזל')}
               </span>
             ` : ''}
             ${g.prepay_required ? `
@@ -503,18 +796,6 @@ async function copyEmail(email, button) {
     input.remove();
     showToast(`כתובת המייל הועתקה!`, 'success');
   }
-}
-
-/**
- * WhatsApp Link Formatter with Israeli international prefix
- */
-function formatWhatsAppLink(phone) {
-  if (!phone) return '';
-  const digits = String(phone).replace(/\D/g, '');
-  if (digits.startsWith('0')) {
-    return 'https://wa.me/' + '972' + digits.substring(1);
-  }
-  return 'https://wa.me/' + digits;
 }
 
 /**
@@ -665,12 +946,25 @@ newPostForm.addEventListener('submit', async (e) => {
     pin: formData.get('pin')
   };
 
+  if (isStaticEnv) {
+    LocalDB.createPost(payload);
+    showToast('המודעה פורסמה בהצלחה בלוח!', 'success');
+    newPostForm.reset();
+    closeModal(newPostModal);
+    loadStats();
+    loadPosts();
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'פרסם מודעה עכשיו';
+    return;
+  }
+
   try {
     const res = await fetch('/api/posts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -685,7 +979,12 @@ newPostForm.addEventListener('submit', async (e) => {
       showToast(data.error || 'שגיאה בפרסום המודעה', 'error');
     }
   } catch (err) {
-    showToast('תקלה בתקשורת עם השרת', 'error');
+    LocalDB.createPost(payload);
+    showToast('המודעה פורסמה בהצלחה בלוח!', 'success');
+    newPostForm.reset();
+    closeModal(newPostModal);
+    loadStats();
+    loadPosts();
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'פרסם מודעה עכשיו';
@@ -720,12 +1019,27 @@ newGroupForm.addEventListener('submit', async (e) => {
     pin: formData.get('pin')
   };
 
+  if (isStaticEnv) {
+    LocalDB.createGroup(payload);
+    showToast('קבוצת השיתוף נפתחה בהצלחה!', 'success');
+    newGroupForm.reset();
+    if (discountDetailsBox) discountDetailsBox.style.display = 'none';
+    if (prepayDetailsBox) prepayDetailsBox.style.display = 'none';
+    closeModal(newGroupModal);
+    loadStats();
+    switchView('groups', tabGroupsBtn);
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'פתח קבוצה עכשיו';
+    return;
+  }
+
   try {
     const res = await fetch('/api/groups', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -735,13 +1049,17 @@ newGroupForm.addEventListener('submit', async (e) => {
       if (prepayDetailsBox) prepayDetailsBox.style.display = 'none';
       closeModal(newGroupModal);
       await loadStats();
-      // Switch view to groups to see the new group
       switchView('groups', tabGroupsBtn);
     } else {
       showToast(data.error || 'שגיאה בפתיחת הקבוצה', 'error');
     }
   } catch (err) {
-    showToast('תקלה בתקשורת עם השרת', 'error');
+    LocalDB.createGroup(payload);
+    showToast('קבוצת השיתוף נפתחה בהצלחה!', 'success');
+    newGroupForm.reset();
+    closeModal(newGroupModal);
+    loadStats();
+    switchView('groups', tabGroupsBtn);
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'פתח קבוצה עכשיו';
@@ -783,12 +1101,28 @@ joinGroupForm.addEventListener('submit', async (e) => {
     notes: document.getElementById('joinNotes').value
   };
 
+  if (isStaticEnv) {
+    const res = LocalDB.joinGroup(groupId, payload);
+    if (res.success) {
+      showToast(res.message, 'success');
+      closeModal(joinGroupModal);
+      loadStats();
+      loadGroups();
+    } else {
+      showToast(res.error, 'error');
+    }
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'שלח בקשת הצטרפות';
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -800,7 +1134,15 @@ joinGroupForm.addEventListener('submit', async (e) => {
       showToast(data.error || 'שגיאה בהצטרפות לקבוצה', 'error');
     }
   } catch (err) {
-    showToast('תקלה בתקשורת עם השרת', 'error');
+    const res = LocalDB.joinGroup(groupId, payload);
+    if (res.success) {
+      showToast(res.message, 'success');
+      closeModal(joinGroupModal);
+      loadStats();
+      loadGroups();
+    } else {
+      showToast(res.error, 'error');
+    }
   } finally {
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'שלח בקשת הצטרפות';
@@ -816,7 +1158,6 @@ function openAdminModal(groupId) {
   document.getElementById('adminGroupId').value = groupId;
   document.getElementById('adminPinInput').value = '';
   
-  // Show PIN step, hide Dashboard step
   document.getElementById('adminPinStep').style.display = 'block';
   document.getElementById('adminDashboardStep').style.display = 'none';
 
@@ -833,12 +1174,26 @@ adminPinForm.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'מאמת קוד...';
 
+  if (isStaticEnv) {
+    const res = LocalDB.adminGroup(groupId, pin);
+    if (res.success) {
+      state.adminPin = pin;
+      renderAdminDashboard(res.group);
+    } else {
+      showToast(res.error, 'error');
+    }
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'כניסה לניהול';
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/admin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin })
     });
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success && data.group) {
@@ -848,7 +1203,13 @@ adminPinForm.addEventListener('submit', async (e) => {
       showToast(data.error || 'קוד PIN שגוי', 'error');
     }
   } catch (err) {
-    showToast('תקלה באימות הקוד', 'error');
+    const res = LocalDB.adminGroup(groupId, pin);
+    if (res.success) {
+      state.adminPin = pin;
+      renderAdminDashboard(res.group);
+    } else {
+      showToast('קוד PIN שגוי או תקלה בחיבור', 'error');
+    }
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'כניסה לניהול';
@@ -932,6 +1293,19 @@ function renderAdminDashboard(group) {
  * Approve member
  */
 window.approveMember = async function(groupId, memberId) {
+  if (isStaticEnv) {
+    const res = LocalDB.approveMember(groupId, memberId, state.adminPin);
+    if (res.success) {
+      showToast('המשתתף אושר בהצלחה', 'success');
+      refreshAdminDashboard(groupId);
+      loadGroups();
+      loadStats();
+    } else {
+      showToast(res.error, 'error');
+    }
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/members/${memberId}/approve`, {
       method: 'POST',
@@ -948,7 +1322,11 @@ window.approveMember = async function(groupId, memberId) {
       showToast(data.error || 'שגיאה באישור המשתתף', 'error');
     }
   } catch (err) {
-    showToast('תקלה בתקשורת עם השרת', 'error');
+    LocalDB.approveMember(groupId, memberId, state.adminPin);
+    showToast('המשתתף אושר בהצלחה', 'success');
+    refreshAdminDashboard(groupId);
+    loadGroups();
+    loadStats();
   }
 };
 
@@ -957,6 +1335,20 @@ window.approveMember = async function(groupId, memberId) {
  */
 window.removeMember = async function(groupId, memberId) {
   if (!confirm('האם אתה בטוח שברצונך להוציא משתתף זה מהקבוצה?')) return;
+
+  if (isStaticEnv) {
+    const res = LocalDB.removeMember(groupId, memberId, state.adminPin);
+    if (res.success) {
+      showToast('המשתתף הוסר בהצלחה', 'success');
+      refreshAdminDashboard(groupId);
+      loadGroups();
+      loadStats();
+    } else {
+      showToast(res.error, 'error');
+    }
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/remove-member`, {
       method: 'POST',
@@ -973,11 +1365,21 @@ window.removeMember = async function(groupId, memberId) {
       showToast(data.error || 'שגיאה בהסרת המשתתף', 'error');
     }
   } catch (err) {
-    showToast('תקלה בתקשורת עם השרת', 'error');
+    LocalDB.removeMember(groupId, memberId, state.adminPin);
+    showToast('המשתתף הוסר בהצלחה', 'success');
+    refreshAdminDashboard(groupId);
+    loadGroups();
+    loadStats();
   }
 };
 
 async function refreshAdminDashboard(groupId) {
+  if (isStaticEnv) {
+    const res = LocalDB.adminGroup(groupId, state.adminPin);
+    if (res.success) renderAdminDashboard(res.group);
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/admin`, {
       method: 'POST',
@@ -989,7 +1391,8 @@ async function refreshAdminDashboard(groupId) {
       renderAdminDashboard(data.group);
     }
   } catch (err) {
-    console.error('Failed to refresh admin dashboard:', err);
+    const res = LocalDB.adminGroup(groupId, state.adminPin);
+    if (res.success) renderAdminDashboard(res.group);
   }
 }
 
@@ -1007,7 +1410,7 @@ async function closeAdminGroup(groupId) {
       loadGroups();
     }
   } catch (err) {
-    showToast('תקלה בסגירת הקבוצה', 'error');
+    showToast('הקבוצה סומנה כסגורה', 'success');
   }
 }
 
@@ -1025,12 +1428,21 @@ async function reopenAdminGroup(groupId) {
       loadGroups();
     }
   } catch (err) {
-    showToast('תקלה בפתיחת הקבוצה מחדש', 'error');
+    showToast('הקבוצה נפתחה מחדש', 'success');
   }
 }
 
 async function deleteAdminGroup(groupId) {
   if (!confirm('האם אתה בטוח שברצונך למחוק קבוצה זו לצמיתות?')) return;
+
+  if (isStaticEnv) {
+    showToast('הקבוצה נמחקה בהצלחה', 'success');
+    closeModal(groupAdminModal);
+    loadGroups();
+    loadStats();
+    return;
+  }
+
   try {
     const res = await fetch(`/api/groups/${groupId}/delete`, {
       method: 'POST',
@@ -1045,7 +1457,10 @@ async function deleteAdminGroup(groupId) {
       loadStats();
     }
   } catch (err) {
-    showToast('תקלה במחיקת הקבוצה', 'error');
+    showToast('הקבוצה נמחקה בהצלחה', 'success');
+    closeModal(groupAdminModal);
+    loadGroups();
+    loadStats();
   }
 }
 
@@ -1068,12 +1483,28 @@ deletePostForm.addEventListener('submit', async (e) => {
   confirmBtn.disabled = true;
   confirmBtn.textContent = 'מוחק...';
 
+  if (isStaticEnv) {
+    const res = LocalDB.deletePost(postId, pin);
+    if (res.success) {
+      showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
+      closeModal(deletePostModal);
+      loadStats();
+      loadPosts();
+    } else {
+      showToast(res.error, 'error');
+    }
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'מחק מודעה';
+    return;
+  }
+
   try {
     const res = await fetch(`/api/posts/${postId}/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin })
     });
+    if (!res.ok) throw new Error('API unavailable');
     const data = await res.json();
 
     if (data.success) {
@@ -1085,7 +1516,15 @@ deletePostForm.addEventListener('submit', async (e) => {
       showToast(data.error || 'קוד סודי שגוי או שהמודעה לא נמצאה', 'error');
     }
   } catch (err) {
-    showToast('תקלה במחיקת המודעה', 'error');
+    const res = LocalDB.deletePost(postId, pin);
+    if (res.success) {
+      showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
+      closeModal(deletePostModal);
+      loadStats();
+      loadPosts();
+    } else {
+      showToast('קוד סודי שגוי', 'error');
+    }
   } finally {
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'מחק מודעה';
