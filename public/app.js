@@ -615,17 +615,20 @@ newPostForm.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'שומר מודעה בשרת...';
 
-  const payload = {
-    type: document.getElementById('postType').value,
-    name: document.getElementById('postName').value,
-    email: document.getElementById('postEmail').value,
-    forum_user: document.getElementById('postForumUser').value,
-    cost_type: document.getElementById('postCostType').value,
-    notes: document.getElementById('postNotes').value,
-    pin: document.getElementById('postPin').value
-  };
-
   try {
+    const selectedType = document.querySelector('input[name="type"]:checked')?.value || 'offer';
+    const selectedCostType = document.querySelector('input[name="cost_type"]:checked')?.value || 'free';
+
+    const payload = {
+      type: selectedType,
+      name: (document.getElementById('postName')?.value || '').trim(),
+      email: (document.getElementById('postEmail')?.value || '').trim(),
+      forum_user: (document.getElementById('postForumUser')?.value || '').trim(),
+      cost_type: selectedCostType,
+      notes: (document.getElementById('postNotes')?.value || '').trim(),
+      pin: (document.getElementById('postPin')?.value || '').trim()
+    };
+
     const data = await apiCall('create_post', { method: 'POST', body: payload });
     showToast('המודעה פורסמה בהצלחה ונשמרה בשרת!', 'success');
     newPostForm.reset();
@@ -649,24 +652,25 @@ newGroupForm.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'פותח קבוצה בשרת...';
 
-  const payload = {
-    title: document.getElementById('groupTitle').value,
-    manager_name: document.getElementById('groupManagerName').value,
-    manager_email: document.getElementById('groupManagerEmail').value,
-    manager_forum_user: document.getElementById('groupManagerForum').value,
-    has_discount: document.getElementById('groupHasDiscount').checked,
-    discount_label: document.getElementById('groupDiscountLabel').value,
-    cost_per_member: document.getElementById('groupCostPerMember').value,
-    require_approval: document.getElementById('groupRequireApproval').checked,
-    private_members: document.getElementById('groupPrivateMembers').checked,
-    requirements: document.getElementById('groupRequirements').value,
-    prepay_required: document.getElementById('groupPrepayRequired').checked,
-    prepay_months: document.getElementById('groupPrepayMonths').value,
-    notes: document.getElementById('groupNotes').value,
-    pin: document.getElementById('groupPin').value
-  };
-
   try {
+    const costInput = document.getElementById('groupCost') || document.getElementById('groupCostPerMember');
+    const payload = {
+      title: (document.getElementById('groupTitle')?.value || '').trim(),
+      manager_name: (document.getElementById('groupManagerName')?.value || '').trim(),
+      manager_email: (document.getElementById('groupManagerEmail')?.value || '').trim(),
+      manager_forum_user: (document.getElementById('groupManagerForum')?.value || '').trim(),
+      has_discount: !!document.getElementById('groupHasDiscount')?.checked,
+      discount_label: (document.getElementById('groupDiscountLabel')?.value || '').trim(),
+      cost_per_member: (costInput?.value || '').trim(),
+      require_approval: !!document.getElementById('groupRequireApproval')?.checked,
+      private_members: !!document.getElementById('groupPrivateMembers')?.checked,
+      requirements: (document.getElementById('groupRequirements')?.value || '').trim(),
+      prepay_required: !!document.getElementById('groupPrepayRequired')?.checked,
+      prepay_months: parseInt(document.getElementById('groupPrepayMonths')?.value || '1', 10),
+      notes: (document.getElementById('groupNotes')?.value || '').trim(),
+      pin: (document.getElementById('groupPin')?.value || '').trim()
+    };
+
     const data = await apiCall('create_group', { method: 'POST', body: payload });
     showToast('קבוצת השיתוף נפתחה בהצלחה ונשמרה בשרת!', 'success');
     newGroupForm.reset();
