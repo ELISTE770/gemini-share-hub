@@ -5,6 +5,9 @@ yarn-debug.log*
 yarn-error.log*
 data/*.db-wal
 data/*.db-shm
+data/*.sqlite-wal
+data/*.sqlite-shm
 .env
 .DS_Store
 Thumbs.db
+

@@ -1,295 +1,12 @@
 // ==========================================================================
-// Gemini Share Hub — Client Application Logic
-// Features: Dual Mode (Live Node.js Server + GitHub Pages Static Fallback)
+// Gemini Share Hub — Client Application Logic (PHP + SQLite Server Edition)
+// Features: Direct Server Storage via api.php (Shared across all users)
 // Primary Focus: Individual Posts (Offers & Requests)
 // Secondary: Group Pooling (5 Members Cost Sharing) with Admin Management
+// Master PIN: 1123355
 // ==========================================================================
 
-// Master Admin PIN that works everywhere for all posts and groups
-const MASTER_PIN = '1123355';
-
-// Detect Static Environment (GitHub Pages / file:// protocol)
-const isStaticEnv = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
-
-// Default Seed Data for Clean Production Board (Zero samples)
-const SEED_POSTS = [];
-const SEED_GROUPS = [];
-
-// Local Client-Side Database (Active on GitHub Pages)
-const LocalDB = {
-  getPostsKey: () => 'gemini_share_posts_v3',
-  getGroupsKey: () => 'gemini_share_groups_v3',
-
-  init() {
-    // Clear legacy seed cache from earlier testing versions
-    ['gemini_share_posts_v1', 'gemini_share_groups_v1', 'gemini_share_posts_v2', 'gemini_share_groups_v2'].forEach(k => {
-      localStorage.removeItem(k);
-    });
-
-    // Purge any lingering sample records that might have been cached
-    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
-    posts = posts.filter(p => p.email && !p.email.includes('eli.pro') && !p.email.includes('david.ai') && !p.email.includes('test'));
-    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
-
-    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    groups = groups.filter(g => g.manager_email && !g.manager_email.includes('yonatan.gemini') && !g.manager_email.includes('test'));
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-  },
-
-  getPosts(filters = {}) {
-    this.init();
-    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
-    if (filters.type && filters.type !== 'all') {
-      posts = posts.filter(p => p.type === filters.type);
-    }
-    if (filters.cost_type && filters.cost_type !== 'all') {
-      posts = posts.filter(p => p.cost_type === filters.cost_type);
-    }
-    if (filters.search && filters.search.trim()) {
-      const q = filters.search.trim().toLowerCase();
-      posts = posts.filter(p =>
-        (p.name && p.name.toLowerCase().includes(q)) ||
-        (p.email && p.email.toLowerCase().includes(q)) ||
-        (p.notes && p.notes.toLowerCase().includes(q)) ||
-        (p.forum_user && p.forum_user.toLowerCase().includes(q))
-      );
-    }
-    return posts.filter(p => p.status === 'active').sort((a,b) => b.id - a.id);
-  },
-
-  createPost(data) {
-    this.init();
-    const posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
-    const newPost = {
-      id: Date.now(),
-      type: data.type,
-      name: data.name,
-      email: data.email,
-      forum_user: data.forum_user ? data.forum_user.replace(/^@/, '') : null,
-      cost_type: data.cost_type,
-      notes: data.notes,
-      pin: String(data.pin).trim(),
-      status: 'active',
-      created_at: new Date().toISOString()
-    };
-    posts.unshift(newPost);
-    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
-    return newPost;
-  },
-
-  deletePost(id, pin) {
-    this.init();
-    let posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]');
-    const post = posts.find(p => p.id === Number(id));
-    if (!post) return { success: false, error: 'המודעה לא נמצאה' };
-    const cleanPin = String(pin || '').trim();
-    if (cleanPin !== MASTER_PIN && post.pin !== cleanPin) {
-      return { success: false, error: 'קוד סודי (PIN) שגוי' };
-    }
-    posts = posts.filter(p => p.id !== Number(id));
-    localStorage.setItem(this.getPostsKey(), JSON.stringify(posts));
-    return { success: true };
-  },
-
-  getGroups(filters = {}) {
-    this.init();
-    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    if (filters.has_discount === 'true') {
-      groups = groups.filter(g => g.has_discount);
-    }
-    if (filters.status === 'open') {
-      groups = groups.filter(g => g.status === 'open');
-    }
-    if (filters.search && filters.search.trim()) {
-      const q = filters.search.trim().toLowerCase();
-      groups = groups.filter(g =>
-        (g.title && g.title.toLowerCase().includes(q)) ||
-        (g.manager_name && g.manager_name.toLowerCase().includes(q)) ||
-        (g.notes && g.notes.toLowerCase().includes(q)) ||
-        (g.manager_forum_user && g.manager_forum_user.toLowerCase().includes(q))
-      );
-    }
-    return groups.sort((a,b) => b.id - a.id);
-  },
-
-  createGroup(data) {
-    this.init();
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const newGroup = {
-      id: Date.now(),
-      title: data.title || (data.has_discount ? `🎓 [הנחת סטודנט] קבוצת שיתוף — ${data.manager_name}` : `👥 קבוצת שיתוף — ${data.manager_name}`),
-      manager_name: data.manager_name,
-      manager_email: data.manager_email,
-      manager_forum_user: data.manager_forum_user ? data.manager_forum_user.replace(/^@/, '') : null,
-      has_discount: Boolean(data.has_discount),
-      discount_label: data.discount_label || 'הנחת סטודנט / מחיר מוזל',
-      cost_per_member: data.cost_per_member,
-      total_slots: 6,
-      require_approval: Boolean(data.require_approval),
-      private_members: Boolean(data.private_members),
-      requirements: data.requirements,
-      prepay_required: Boolean(data.prepay_required),
-      prepay_months: Number(data.prepay_months) || 1,
-      notes: data.notes,
-      pin: String(data.pin).trim(),
-      status: 'open',
-      members: [],
-      pending_members: [],
-      members_count: 0,
-      pending_count: 0,
-      slots_taken: 1,
-      slots_free: 5,
-      needed_members: 5,
-      created_at: new Date().toISOString()
-    };
-    groups.unshift(newGroup);
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return newGroup;
-  },
-
-  joinGroup(groupId, memberData) {
-    this.init();
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
-    if (group.slots_free <= 0) return { success: false, error: 'הקבוצה מלאה' };
-
-    const newMember = {
-      id: Date.now(),
-      member_name: memberData.member_name,
-      member_email: memberData.member_email,
-      member_forum_user: memberData.member_forum_user ? memberData.member_forum_user.replace(/^@/, '') : null,
-      notes: memberData.notes,
-      status: group.require_approval ? 'pending' : 'approved',
-      created_at: new Date().toISOString()
-    };
-
-    if (group.require_approval) {
-      if (!group.pending_members) group.pending_members = [];
-      group.pending_members.push(newMember);
-      group.pending_count = group.pending_members.length;
-    } else {
-      if (!group.members) group.members = [];
-      group.members.push(newMember);
-      group.members_count = group.members.length;
-      group.slots_taken = 1 + group.members_count;
-      group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
-      if (group.slots_free === 0) group.status = 'full';
-    }
-
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return {
-      success: true,
-      group,
-      isPending: group.require_approval,
-      message: group.require_approval ? 'בקשתך נרשמה בהצלחה וממתינה לאישור המנהל' : 'הצטרפת לקבוצה בהצלחה!'
-    };
-  },
-
-  adminGroup(groupId, pin) {
-    this.init();
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
-    const cleanPin = String(pin || '').trim();
-    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
-      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
-    }
-    return { success: true, group };
-  },
-
-  approveMember(groupId, memberId, pin) {
-    this.init();
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    const cleanPin = String(pin || '').trim();
-    if (!group || (cleanPin !== MASTER_PIN && group.pin !== cleanPin)) {
-      return { success: false, error: 'קוד שגוי' };
-    }
-
-    const pendingIdx = (group.pending_members || []).findIndex(m => m.id === Number(memberId));
-    if (pendingIdx === -1) return { success: false, error: 'המשתתף לא נמצא' };
-
-    const member = group.pending_members.splice(pendingIdx, 1)[0];
-    member.status = 'approved';
-    if (!group.members) group.members = [];
-    group.members.push(member);
-
-    group.pending_count = group.pending_members.length;
-    group.members_count = group.members.length;
-    group.slots_taken = 1 + group.members_count;
-    group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
-    if (group.slots_free === 0) group.status = 'full';
-
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return { success: true };
-  },
-
-  removeMember(groupId, memberId, pin) {
-    this.init();
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    const cleanPin = String(pin || '').trim();
-    if (!group || (cleanPin !== MASTER_PIN && group.pin !== cleanPin)) {
-      return { success: false, error: 'קוד שגוי' };
-    }
-
-    if (group.members) {
-      group.members = group.members.filter(m => m.id !== Number(memberId));
-    }
-    if (group.pending_members) {
-      group.pending_members = group.pending_members.filter(m => m.id !== Number(memberId));
-    }
-
-    group.members_count = (group.members || []).length;
-    group.pending_count = (group.pending_members || []).length;
-    group.slots_taken = 1 + group.members_count;
-    group.slots_free = Math.max(0, group.total_slots - group.slots_taken);
-    if (group.slots_free > 0 && group.status === 'full') group.status = 'open';
-
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return { success: true };
-  },
-
-  deleteGroup(groupId, pin) {
-    this.init();
-    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
-    const cleanPin = String(pin || '').trim();
-    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
-      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
-    }
-    groups = groups.filter(g => g.id !== Number(groupId));
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return { success: true };
-  },
-
-  toggleGroupStatus(groupId, newStatus, pin) {
-    this.init();
-    let groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    const group = groups.find(g => g.id === Number(groupId));
-    if (!group) return { success: false, error: 'הקבוצה לא נמצאה' };
-    const cleanPin = String(pin || '').trim();
-    if (cleanPin !== MASTER_PIN && group.pin !== cleanPin) {
-      return { success: false, error: 'קוד ניהול (PIN) שגוי' };
-    }
-    group.status = newStatus;
-    localStorage.setItem(this.getGroupsKey(), JSON.stringify(groups));
-    return { success: true, group };
-  },
-
-  getStats() {
-    this.init();
-    const posts = JSON.parse(localStorage.getItem(this.getPostsKey()) || '[]').filter(p => p.status === 'active');
-    const groups = JSON.parse(localStorage.getItem(this.getGroupsKey()) || '[]');
-    return {
-      offers: posts.filter(p => p.type === 'offer').length,
-      requests: posts.filter(p => p.type === 'request').length,
-      groups: groups.filter(g => g.status === 'open' || g.status === 'full').length
-    };
-  }
-};
+const API_ENDPOINT = 'api.php';
 
 // Global State
 const state = {
@@ -423,31 +140,51 @@ function formatDate(dateStr) {
 }
 
 /**
+ * Unified API Request Helper
+ */
+async function apiCall(action, options = {}) {
+  const method = options.method || 'GET';
+  let url = `${API_ENDPOINT}?action=${encodeURIComponent(action)}`;
+  
+  const fetchOpts = {
+    method,
+    headers: { 'Content-Type': 'application/json' }
+  };
+
+  if (method === 'GET' && options.params) {
+    const q = new URLSearchParams(options.params).toString();
+    if (q) url += '&' + q;
+  } else if (method === 'POST' && options.body) {
+    fetchOpts.body = JSON.stringify(options.body);
+  }
+
+  const res = await fetch(url, fetchOpts);
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw new Error('שגיאת תקשורת עם השרת');
+  }
+
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || 'אירעה שגיאה בביצוע הפעולה');
+  }
+  return data;
+}
+
+/**
  * Load Stats
  */
 async function loadStats() {
-  if (isStaticEnv) {
-    const stats = LocalDB.getStats();
-    if (offersCountEl) offersCountEl.textContent = stats.offers;
-    if (requestsCountEl) requestsCountEl.textContent = stats.requests;
-    if (groupsCountEl) groupsCountEl.textContent = stats.groups;
-    return;
-  }
-
   try {
-    const res = await fetch('/api/stats');
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
+    const data = await apiCall('stats');
     if (data.success && data.stats) {
       if (offersCountEl) offersCountEl.textContent = data.stats.offers;
       if (requestsCountEl) requestsCountEl.textContent = data.stats.requests;
       if (groupsCountEl) groupsCountEl.textContent = data.stats.groups;
     }
   } catch (err) {
-    const stats = LocalDB.getStats();
-    if (offersCountEl) offersCountEl.textContent = stats.offers;
-    if (requestsCountEl) requestsCountEl.textContent = stats.requests;
-    if (groupsCountEl) groupsCountEl.textContent = stats.groups;
+    console.error('Stats error:', err);
   }
 }
 
@@ -472,31 +209,12 @@ async function loadPosts() {
     search: state.search
   };
 
-  if (isStaticEnv) {
-    state.posts = LocalDB.getPosts(filters);
-    renderPosts(state.posts);
-    return;
-  }
-
   try {
-    const params = new URLSearchParams();
-    if (filters.type !== 'all') params.append('type', filters.type);
-    if (filters.cost_type !== 'all') params.append('cost_type', filters.cost_type);
-    if (filters.search.trim()) params.append('search', filters.search.trim());
-
-    const res = await fetch(`/api/posts?${params.toString()}`);
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      state.posts = data.posts;
-      renderPosts(data.posts);
-    } else {
-      showToast(data.error || 'שגיאה בטעינת המודעות', 'error');
-    }
-  } catch (err) {
-    state.posts = LocalDB.getPosts(filters);
+    const data = await apiCall('posts', { params: filters });
+    state.posts = data.posts || [];
     renderPosts(state.posts);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בטעינת המודעות', 'error');
   }
 }
 
@@ -590,31 +308,12 @@ async function loadGroups() {
     search: state.search
   };
 
-  if (isStaticEnv) {
-    state.groups = LocalDB.getGroups(filters);
-    renderGroups(state.groups);
-    return;
-  }
-
   try {
-    const params = new URLSearchParams();
-    if (filters.status === 'open') params.append('status', 'open');
-    if (filters.has_discount === 'true') params.append('has_discount', 'true');
-    if (filters.search.trim()) params.append('search', filters.search.trim());
-
-    const res = await fetch(`/api/groups?${params.toString()}`);
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      state.groups = data.groups;
-      renderGroups(data.groups);
-    } else {
-      showToast(data.error || 'שגיאה בטעינת הקבוצות', 'error');
-    }
-  } catch (err) {
-    state.groups = LocalDB.getGroups(filters);
+    const data = await apiCall('groups', { params: filters });
+    state.groups = data.groups || [];
     renderGroups(state.groups);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בטעינת הקבוצות', 'error');
   }
 }
 
@@ -705,61 +404,64 @@ function renderGroups(groups) {
             ${slotBoxes}
           </div>
           <div class="occupancy-sub">
-            ${g.slots_free > 0 ? `נותרו עוד <strong>${g.slots_free}</strong> מקומות פנויים להצטרפות` : `כל המקומות נתפסו`}
-            ${g.pending_count > 0 ? ` • <span style="color: var(--brand-gold-glow);">${g.pending_count} ממתינים לאישור</span>` : ''}
+            ${isClosed ? 'קבוצה זו נסגרה ע"י המנהל' : (isFull ? 'כל 5 המקומות תפוסים' : `נותרו עוד ${g.slots_free} מקומות פנויים`)}
           </div>
         </div>
 
-        <!-- Cost & Requirements -->
-        <div class="group-details-box">
+        <!-- Meta details -->
+        <div class="group-meta-grid">
           ${g.cost_per_member ? `
-            <div class="detail-row">
-              <span class="detail-label">עלות למשתתף:</span>
-              <strong class="detail-val" style="color: var(--brand-gold);">${escapeHtml(g.cost_per_member)}</strong>
+            <div class="meta-item">
+              <span class="meta-label">עלות למשתתף:</span>
+              <strong class="meta-value">${escapeHtml(g.cost_per_member)}</strong>
             </div>
           ` : ''}
           ${g.requirements ? `
-            <div class="requirements-box">
-              <strong>📋 תנאי הצטרפות:</strong>
-              <p>${escapeHtml(g.requirements)}</p>
+            <div class="meta-item" style="grid-column: 1 / -1;">
+              <span class="meta-label">📋 תנאי הצטרפות:</span>
+              <span class="meta-value">${escapeHtml(g.requirements)}</span>
             </div>
-          ` : ''}
-          ${g.notes ? `
-            <div class="notes-box" style="margin-top: 0.5rem;">${escapeHtml(g.notes)}</div>
           ` : ''}
         </div>
 
-        <!-- Manager Contact -->
-        <div class="contact-actions">
-          <div class="email-box">
-            <span class="email-address">${escapeHtml(g.manager_email)}</span>
-            <button class="btn-icon btn-copy" onclick="copyEmail('${escapeHtml(g.manager_email)}', this)" title="העתק מייל מנהל">
-              <span>📋</span>
-              <span>העתק</span>
-            </button>
+        ${g.notes ? `<div class="notes-box">${escapeHtml(g.notes)}</div>` : ''}
+
+        <!-- Members preview -->
+        <div class="members-preview">
+          <span class="members-preview-title">חברי הקבוצה שהצטרפו (${g.members_count}/5):</span>
+          <div class="members-chip-list">
+            <span class="member-chip manager-chip">👑 מנהל: ${escapeHtml(g.manager_name)}</span>
+            ${(g.members || []).map(m => `
+              <span class="member-chip">
+                ✓ ${escapeHtml(m.member_name)} ${m.member_forum_user ? `(@${escapeHtml(m.member_forum_user)})` : ''}
+              </span>
+            `).join('')}
+            ${Array.from({ length: g.slots_free }).map(() => `
+              <span class="member-chip empty-chip">+ מקום פנוי</span>
+            `).join('')}
           </div>
         </div>
 
-        <!-- Group Actions -->
-        <div class="group-card-actions">
-          ${(!isFull && !isClosed) ? `
-            <button class="btn btn-primary" style="flex: 1;" onclick="openJoinModal(${g.id}, '${escapeHtml(g.title).replace(/'/g, "\\'")}', ${Boolean(g.require_approval)})">
-              🤝 הצטרף לקבוצה
+        <!-- Manager contact or Join Action -->
+        <div class="contact-actions" style="margin-top: 1rem;">
+          ${!isFull && !isClosed ? `
+            <button class="btn btn-primary" onclick="openJoinModal(${g.id}, '${escapeHtml(g.title)}', ${g.require_approval})" style="width: 100%;">
+              <span>⚡</span>
+              <span>${g.require_approval ? 'בקש להצטרף לקבוצה (אישור מנהל)' : 'הצטרף לקבוצה עכשיו'}</span>
             </button>
           ` : `
-            <button class="btn btn-outline" style="flex: 1; opacity: 0.7; cursor: not-allowed;" disabled>
-              ${isClosed ? 'קבוצה סגורה' : 'קבוצה מלאה'}
+            <button class="btn btn-outline" disabled style="width: 100%; opacity: 0.6; cursor: not-allowed;">
+              ${isClosed ? '🔒 קבוצה זו סגורה' : '🔒 קבוצה מלאה (5/5)'}
             </button>
           `}
-          
-          <button class="btn btn-outline btn-icon" onclick="openAdminModal(${g.id})" title="ניהול מנהל הקבוצה">
-            <span>⚙️</span>
-            <span>ניהול מנהל</span>
-          </button>
         </div>
 
         <div class="card-footer">
           <span style="color: var(--text-muted); font-size: 0.75rem;">קבוצה #${g.id}</span>
+          <button class="btn btn-outline btn-icon" onclick="openAdminModal(${g.id})" title="ניהול מנהל הקבוצה">
+            <span>⚙️</span>
+            <span>ניהול מנהל</span>
+          </button>
         </div>
 
       </article>
@@ -768,30 +470,51 @@ function renderGroups(groups) {
 }
 
 /**
- * Copy Email
+ * Copy Email to Clipboard
  */
-async function copyEmail(email, button) {
-  try {
-    await navigator.clipboard.writeText(email);
-    const originalText = button.innerHTML;
-    button.innerHTML = '<span>✓</span><span>הועתק!</span>';
-    button.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
-    button.style.color = '#10b981';
-    showToast(`כתובת המייל ${email} הועתקה ללוח`, 'success');
-    setTimeout(() => {
-      button.innerHTML = originalText;
-      button.style.backgroundColor = '';
-      button.style.color = '';
-    }, 2000);
-  } catch (err) {
-    const input = document.createElement('input');
-    input.value = email;
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    input.remove();
-    showToast(`כתובת המייל הועתקה!`, 'success');
+function copyEmail(email, btn) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(email).then(() => {
+      showToast('כתובת האימייל הועתקה ללוח!', 'success');
+      const origText = btn.innerHTML;
+      btn.innerHTML = '<span>✓</span><span>הועתק!</span>';
+      setTimeout(() => { btn.innerHTML = origText; }, 2000);
+    }).catch(() => fallbackCopy(email));
+  } else {
+    fallbackCopy(email);
   }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  showToast('כתובת האימייל הועתקה ללוח!', 'success');
+}
+
+/**
+ * Switch Navigation Tab
+ */
+function switchView(newView, activeBtn) {
+  state.view = newView;
+
+  switchTabs.forEach(btn => {
+    if (btn) btn.classList.remove('active');
+  });
+  if (activeBtn) activeBtn.classList.add('active');
+
+  if (newView === 'groups') {
+    postsCostFilters.style.display = 'none';
+    groupsFilters.style.display = 'flex';
+  } else {
+    postsCostFilters.style.display = 'flex';
+    groupsFilters.style.display = 'none';
+  }
+
+  loadContent();
 }
 
 /**
@@ -809,178 +532,92 @@ function closeModal(modal) {
   document.body.style.overflow = '';
 }
 
-// Global modal close handlers
+// Modal Click Backdrops & Close Buttons
+document.querySelectorAll('.modal-backdrop').forEach(modal => {
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal(modal);
+  });
+});
+
 document.querySelectorAll('[data-close]').forEach(btn => {
   btn.addEventListener('click', () => {
     const modalId = btn.getAttribute('data-close');
-    const modal = document.getElementById(modalId);
-    if (modal) closeModal(modal);
+    const targetModal = document.getElementById(modalId);
+    if (targetModal) closeModal(targetModal);
   });
 });
 
-document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) closeModal(backdrop);
-  });
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    document.querySelectorAll('.modal-backdrop.active').forEach(closeModal);
-  }
-});
-
-// Trigger Buttons
+// Setup Action Buttons
 if (openNewPostBtn) openNewPostBtn.addEventListener('click', () => openModal(newPostModal));
 if (openNewGroupBtn) openNewGroupBtn.addEventListener('click', () => openModal(newGroupModal));
 if (openFaqBtn) openFaqBtn.addEventListener('click', () => openModal(faqModal));
 
-/**
- * Radio card styling helper
- */
-function setupRadioGroup(containerSelector) {
-  const cards = document.querySelectorAll(containerSelector);
-  cards.forEach(card => {
-    card.addEventListener('click', () => {
-      cards.forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-      const radio = card.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
-    });
+// Navigation Tabs Click Listeners
+if (tabOffersBtn) tabOffersBtn.addEventListener('click', () => switchView('offers', tabOffersBtn));
+if (tabRequestsBtn) tabRequestsBtn.addEventListener('click', () => switchView('requests', tabRequestsBtn));
+if (tabAllBtn) tabAllBtn.addEventListener('click', () => switchView('all', tabAllBtn));
+if (tabGroupsBtn) tabGroupsBtn.addEventListener('click', () => switchView('groups', tabGroupsBtn));
+
+// Cost Filters (Posts)
+postsCostFilters.querySelectorAll('.cost-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    postsCostFilters.querySelectorAll('.cost-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.postCost = chip.getAttribute('data-cost');
+    loadPosts();
   });
-}
-setupRadioGroup('#newPostModal .radio-cards:nth-of-type(1) .radio-card');
-setupRadioGroup('#newPostModal .radio-cards:nth-of-type(2) .radio-card');
-
-/**
- * Tab Switching (Primary: Offers, Requests, All, Groups)
- */
-tabOffersBtn.addEventListener('click', () => switchView('offers', tabOffersBtn));
-tabRequestsBtn.addEventListener('click', () => switchView('requests', tabRequestsBtn));
-tabAllBtn.addEventListener('click', () => switchView('all', tabAllBtn));
-tabGroupsBtn.addEventListener('click', () => switchView('groups', tabGroupsBtn));
-
-function switchView(viewName, activeBtn) {
-  state.view = viewName;
-  switchTabs.forEach(t => {
-    if (t) {
-      t.classList.remove('active');
-      t.setAttribute('aria-selected', 'false');
-    }
-  });
-  if (activeBtn) {
-    activeBtn.classList.add('active');
-    activeBtn.setAttribute('aria-selected', 'true');
-  }
-
-  // Update Toolbar
-  if (viewName === 'groups') {
-    postsCostFilters.style.display = 'none';
-    groupsFilters.style.display = 'flex';
-  } else {
-    postsCostFilters.style.display = 'flex';
-    groupsFilters.style.display = 'none';
-  }
-
-  loadContent();
-}
-
-/**
- * Filter Chips: Posts Cost
- */
-postsCostFilters.addEventListener('click', (e) => {
-  const chip = e.target.closest('.cost-chip');
-  if (!chip) return;
-  postsCostFilters.querySelectorAll('.cost-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  state.postCost = chip.dataset.cost;
-  loadPosts();
 });
 
-/**
- * Filter Chips: Groups
- */
-groupsFilters.addEventListener('click', (e) => {
-  const chip = e.target.closest('.cost-chip');
-  if (!chip) return;
-  groupsFilters.querySelectorAll('.cost-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  state.groupFilter = chip.dataset.groupFilter;
-  loadGroups();
+// Group Filters
+groupsFilters.querySelectorAll('.group-filter-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    groupsFilters.querySelectorAll('.group-filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.groupFilter = chip.getAttribute('data-group-filter');
+    loadGroups();
+  });
 });
 
-/**
- * Live Search (Debounced)
- */
+// Search Input Debounced
 let searchTimeout;
-searchInput.addEventListener('input', (e) => {
-  clearTimeout(searchTimeout);
-  searchTimeout = setTimeout(() => {
-    state.search = e.target.value;
-    loadContent();
-  }, 250);
-});
+if (searchInput) {
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      state.search = searchInput.value.trim();
+      loadContent();
+    }, 250);
+  });
+}
 
 /**
- * Handle New Individual Post Submission
+ * Submit New Post Form
  */
 newPostForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const submitBtn = document.getElementById('submitPostBtn');
   submitBtn.disabled = true;
-  submitBtn.textContent = 'מפרסם מודעה...';
+  submitBtn.textContent = 'שומר מודעה בשרת...';
 
-  const formData = new FormData(newPostForm);
   const payload = {
-    website: formData.get('website'),
-    type: formData.get('type'),
-    name: formData.get('name'),
-    email: formData.get('email'),
-    forum_user: formData.get('forum_user'),
-    cost_type: formData.get('cost_type'),
-    notes: formData.get('notes'),
-    pin: formData.get('pin')
+    type: document.getElementById('postType').value,
+    name: document.getElementById('postName').value,
+    email: document.getElementById('postEmail').value,
+    forum_user: document.getElementById('postForumUser').value,
+    cost_type: document.getElementById('postCostType').value,
+    notes: document.getElementById('postNotes').value,
+    pin: document.getElementById('postPin').value
   };
 
-  if (isStaticEnv) {
-    LocalDB.createPost(payload);
-    showToast('המודעה פורסמה בהצלחה בלוח!', 'success');
-    newPostForm.reset();
-    closeModal(newPostModal);
-    loadStats();
-    loadPosts();
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'פרסם מודעה עכשיו';
-    return;
-  }
-
   try {
-    const res = await fetch('/api/posts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      showToast('המודעה פורסמה בהצלחה בלוח!', 'success');
-      newPostForm.reset();
-      closeModal(newPostModal);
-      await loadStats();
-      if (state.view !== 'groups') {
-        await loadPosts();
-      }
-    } else {
-      showToast(data.error || 'שגיאה בפרסום המודעה', 'error');
-    }
-  } catch (err) {
-    LocalDB.createPost(payload);
-    showToast('המודעה פורסמה בהצלחה בלוח!', 'success');
+    const data = await apiCall('create_post', { method: 'POST', body: payload });
+    showToast('המודעה פורסמה בהצלחה ונשמרה בשרת!', 'success');
     newPostForm.reset();
     closeModal(newPostModal);
-    loadStats();
-    loadPosts();
+    await loadStats();
+    await loadPosts();
+  } catch (err) {
+    showToast(err.message || 'שגיאה בפרסום המודעה', 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'פרסם מודעה עכשיו';
@@ -988,74 +625,40 @@ newPostForm.addEventListener('submit', async (e) => {
 });
 
 /**
- * Handle New Group Submission
+ * Submit New Group Form
  */
 newGroupForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const submitBtn = document.getElementById('submitGroupBtn');
   submitBtn.disabled = true;
-  submitBtn.textContent = 'פותח קבוצה...';
+  submitBtn.textContent = 'פותח קבוצה בשרת...';
 
-  const formData = new FormData(newGroupForm);
   const payload = {
-    website: formData.get('website'),
-    title: formData.get('title'),
-    manager_name: formData.get('manager_name'),
-    manager_email: formData.get('manager_email'),
-    manager_forum_user: formData.get('manager_forum_user'),
-    has_discount: groupHasDiscount ? groupHasDiscount.checked : false,
-    discount_label: formData.get('discount_label'),
-    cost_per_member: formData.get('cost_per_member'),
-    prepay_required: groupPrepayRequired ? groupPrepayRequired.checked : false,
-    prepay_months: formData.get('prepay_months'),
+    title: document.getElementById('groupTitle').value,
+    manager_name: document.getElementById('groupManagerName').value,
+    manager_email: document.getElementById('groupManagerEmail').value,
+    manager_forum_user: document.getElementById('groupManagerForum').value,
+    has_discount: document.getElementById('groupHasDiscount').checked,
+    discount_label: document.getElementById('groupDiscountLabel').value,
+    cost_per_member: document.getElementById('groupCostPerMember').value,
     require_approval: document.getElementById('groupRequireApproval').checked,
     private_members: document.getElementById('groupPrivateMembers').checked,
-    requirements: formData.get('requirements'),
-    notes: formData.get('notes'),
-    pin: formData.get('pin')
+    requirements: document.getElementById('groupRequirements').value,
+    prepay_required: document.getElementById('groupPrepayRequired').checked,
+    prepay_months: document.getElementById('groupPrepayMonths').value,
+    notes: document.getElementById('groupNotes').value,
+    pin: document.getElementById('groupPin').value
   };
 
-  if (isStaticEnv) {
-    LocalDB.createGroup(payload);
-    showToast('קבוצת השיתוף נפתחה בהצלחה!', 'success');
-    newGroupForm.reset();
-    if (discountDetailsBox) discountDetailsBox.style.display = 'none';
-    if (prepayDetailsBox) prepayDetailsBox.style.display = 'none';
-    closeModal(newGroupModal);
-    loadStats();
-    switchView('groups', tabGroupsBtn);
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'פתח קבוצה עכשיו';
-    return;
-  }
-
   try {
-    const res = await fetch('/api/groups', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      showToast('קבוצת השיתוף נפתחה בהצלחה!', 'success');
-      newGroupForm.reset();
-      if (discountDetailsBox) discountDetailsBox.style.display = 'none';
-      if (prepayDetailsBox) prepayDetailsBox.style.display = 'none';
-      closeModal(newGroupModal);
-      await loadStats();
-      switchView('groups', tabGroupsBtn);
-    } else {
-      showToast(data.error || 'שגיאה בפתיחת הקבוצה', 'error');
-    }
-  } catch (err) {
-    LocalDB.createGroup(payload);
-    showToast('קבוצת השיתוף נפתחה בהצלחה!', 'success');
+    const data = await apiCall('create_group', { method: 'POST', body: payload });
+    showToast('קבוצת השיתוף נפתחה בהצלחה ונשמרה בשרת!', 'success');
     newGroupForm.reset();
     closeModal(newGroupModal);
-    loadStats();
+    await loadStats();
     switchView('groups', tabGroupsBtn);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בפתיחת הקבוצה', 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'פתח קבוצה עכשיו';
@@ -1088,57 +691,24 @@ joinGroupForm.addEventListener('submit', async (e) => {
   const groupId = document.getElementById('joinGroupId').value;
   const confirmBtn = document.getElementById('confirmJoinBtn');
   confirmBtn.disabled = true;
-  confirmBtn.textContent = 'שולח...';
+  confirmBtn.textContent = 'שולח לשרת...';
 
   const payload = {
+    group_id: groupId,
     member_name: document.getElementById('joinMemberName').value,
     member_email: document.getElementById('joinMemberEmail').value,
     member_forum_user: document.getElementById('joinMemberForum').value,
     notes: document.getElementById('joinNotes').value
   };
 
-  if (isStaticEnv) {
-    const res = LocalDB.joinGroup(groupId, payload);
-    if (res.success) {
-      showToast(res.message, 'success');
-      closeModal(joinGroupModal);
-      loadStats();
-      loadGroups();
-    } else {
-      showToast(res.error, 'error');
-    }
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = 'שלח בקשת הצטרפות';
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/join`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      showToast(data.message || 'הצטרפת לקבוצה בהצלחה!', 'success');
-      closeModal(joinGroupModal);
-      await loadStats();
-      await loadGroups();
-    } else {
-      showToast(data.error || 'שגיאה בהצטרפות לקבוצה', 'error');
-    }
+    const data = await apiCall('join_group', { method: 'POST', body: payload });
+    showToast(data.message || 'הצטרפת לקבוצה בהצלחה!', 'success');
+    closeModal(joinGroupModal);
+    await loadStats();
+    await loadGroups();
   } catch (err) {
-    const res = LocalDB.joinGroup(groupId, payload);
-    if (res.success) {
-      showToast(res.message, 'success');
-      closeModal(joinGroupModal);
-      loadStats();
-      loadGroups();
-    } else {
-      showToast(res.error, 'error');
-    }
+    showToast(err.message || 'שגיאה בהצטרפות לקבוצה', 'error');
   } finally {
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'שלח בקשת הצטרפות';
@@ -1146,7 +716,7 @@ joinGroupForm.addEventListener('submit', async (e) => {
 });
 
 /**
- * Manager Admin Modal Flow (View unmasked members, approve pending, remove members)
+ * Manager Admin Modal Flow
  */
 function openAdminModal(groupId) {
   state.adminGroupId = groupId;
@@ -1168,44 +738,17 @@ adminPinForm.addEventListener('submit', async (e) => {
   const submitBtn = document.getElementById('adminPinSubmitBtn');
 
   submitBtn.disabled = true;
-  submitBtn.textContent = 'מאמת קוד...';
-
-  if (isStaticEnv) {
-    const res = LocalDB.adminGroup(groupId, pin);
-    if (res.success) {
-      state.adminPin = pin;
-      renderAdminDashboard(res.group);
-    } else {
-      showToast(res.error, 'error');
-    }
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'כניסה לניהול';
-    return;
-  }
+  submitBtn.textContent = 'מאמת קוד מול השרת...';
 
   try {
-    const res = await fetch(`/api/groups/${groupId}/admin`, {
+    const data = await apiCall('group_admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin })
+      body: { group_id: groupId, pin }
     });
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success && data.group) {
-      state.adminPin = pin;
-      renderAdminDashboard(data.group);
-    } else {
-      showToast(data.error || 'קוד PIN שגוי', 'error');
-    }
+    state.adminPin = pin;
+    renderAdminDashboard(data.group);
   } catch (err) {
-    const res = LocalDB.adminGroup(groupId, pin);
-    if (res.success) {
-      state.adminPin = pin;
-      renderAdminDashboard(res.group);
-    } else {
-      showToast('קוד PIN שגוי או תקלה בחיבור', 'error');
-    }
+    showToast(err.message || 'קוד PIN שגוי', 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'כניסה לניהול';
@@ -1226,22 +769,16 @@ function renderAdminDashboard(group) {
   if (group.pending_members && group.pending_members.length > 0) {
     pendingSection.style.display = 'block';
     pendingList.innerHTML = group.pending_members.map(m => `
-      <div class="admin-member-card glass-card">
-        <div class="member-meta">
+      <div class="pending-item glass-card" style="display: flex; justify-content: space-between; align-items: center; padding: 0.65rem; margin-bottom: 0.5rem; border: 1px solid rgba(212,175,55,0.3); border-radius: var(--radius-sm);">
+        <div>
           <strong>${escapeHtml(m.member_name)}</strong>
-          <span style="font-family: monospace; font-size: 0.85rem;">${escapeHtml(m.member_email)}</span>
-          ${m.member_forum_user ? `<span class="badge badge-forum" style="font-size: 0.75rem;">@${escapeHtml(m.member_forum_user)}</span>` : ''}
-          ${m.notes ? `<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">${escapeHtml(m.notes)}</div>` : ''}
+          <span style="font-size: 0.8rem; color: var(--text-muted);"> (${escapeHtml(m.member_email)})</span>
+          ${m.member_forum_user ? `<br><small style="color: var(--brand-gold);">👤 @${escapeHtml(m.member_forum_user)}</small>` : ''}
+          ${m.notes ? `<div style="font-size: 0.8rem; margin-top: 0.2rem;">${escapeHtml(m.notes)}</div>` : ''}
         </div>
         <div style="display: flex; gap: 0.4rem;">
-          <button class="btn btn-secondary btn-icon" onclick="approveMember(${group.id}, ${m.id})">
-            <span>✅</span>
-            <span>אשר</span>
-          </button>
-          <button class="btn btn-danger btn-icon" onclick="removeMember(${group.id}, ${m.id})">
-            <span>❌</span>
-            <span>דחה</span>
-          </button>
+          <button class="btn btn-primary btn-sm" onclick="approveMember(${group.id}, ${m.id})">✅ אשר</button>
+          <button class="btn btn-outline btn-sm" onclick="removeMember(${group.id}, ${m.id})">❌ דחה</button>
         </div>
       </div>
     `).join('');
@@ -1250,29 +787,29 @@ function renderAdminDashboard(group) {
     pendingList.innerHTML = '';
   }
 
-  // Approved Members
-  const membersList = document.getElementById('adminMembersList');
+  // Active Approved Members
+  const activeList = document.getElementById('adminActiveMembersList');
   if (group.members && group.members.length > 0) {
-    membersList.innerHTML = group.members.map((m, idx) => `
-      <div class="admin-member-card glass-card">
-        <div class="member-meta">
-          <strong>#${idx + 1} ${escapeHtml(m.member_name)}</strong>
-          <span style="font-family: monospace; font-size: 0.85rem;">${escapeHtml(m.member_email)}</span>
-          ${m.member_forum_user ? `<span class="badge badge-forum" style="font-size: 0.75rem;">@${escapeHtml(m.member_forum_user)}</span>` : ''}
-          ${m.notes ? `<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">${escapeHtml(m.notes)}</div>` : ''}
+    activeList.innerHTML = group.members.map(m => `
+      <div class="active-member-item glass-card" style="display: flex; justify-content: space-between; align-items: center; padding: 0.65rem; margin-bottom: 0.5rem; border-radius: var(--radius-sm);">
+        <div>
+          <strong>${escapeHtml(m.member_name)}</strong>
+          <span style="font-size: 0.8rem; color: var(--text-muted);"> (${escapeHtml(m.member_email)})</span>
+          ${m.member_forum_user ? `<br><small style="color: var(--brand-gold);">👤 @${escapeHtml(m.member_forum_user)}</small>` : ''}
         </div>
-        <button class="btn btn-danger btn-icon" onclick="removeMember(${group.id}, ${m.id})" title="הוצא שותף זה מהקבוצה ופנה מקום">
-          <span>❌</span>
-          <span>הוצא מהקבוצה</span>
-        </button>
+        <div>
+          <button class="btn btn-outline btn-sm" style="color: #ff6b6b; border-color: rgba(255,107,107,0.4);" onclick="removeMember(${group.id}, ${m.id})">
+            ❌ הוצא מהקבוצה
+          </button>
+        </div>
       </div>
     `).join('');
   } else {
-    membersList.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">עדיין אין שותפים שהצטרפו לקבוצה זו.</p>`;
+    activeList.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem;">טרם הצטרפו שותפים לקבוצה זו.</div>';
   }
 
-  // Toggle Close / Reopen button
-  const toggleBtn = document.getElementById('adminToggleCloseBtn');
+  // Status toggle
+  const toggleBtn = document.getElementById('adminToggleStatusBtn');
   if (group.status === 'closed') {
     toggleBtn.textContent = '🔓 פתח קבוצה מחדש';
     toggleBtn.onclick = () => reopenAdminGroup(group.id);
@@ -1289,40 +826,17 @@ function renderAdminDashboard(group) {
  * Approve member
  */
 window.approveMember = async function(groupId, memberId) {
-  if (isStaticEnv) {
-    const res = LocalDB.approveMember(groupId, memberId, state.adminPin);
-    if (res.success) {
-      showToast('המשתתף אושר בהצלחה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(res.error, 'error');
-    }
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/members/${memberId}/approve`, {
+    const data = await apiCall('approve_member', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin })
+      body: { group_id: groupId, member_id: memberId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast('המשתתף אושר בהצלחה ונוסף לקבוצה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(data.error || 'שגיאה באישור המשתתף', 'error');
-    }
-  } catch (err) {
-    LocalDB.approveMember(groupId, memberId, state.adminPin);
-    showToast('המשתתף אושר בהצלחה', 'success');
+    showToast('המשתתף אושר בהצלחה ונוסף לקבוצה', 'success');
     refreshAdminDashboard(groupId);
     loadGroups();
     loadStats();
+  } catch (err) {
+    showToast(err.message || 'שגיאה באישור המשתתף', 'error');
   }
 };
 
@@ -1332,173 +846,74 @@ window.approveMember = async function(groupId, memberId) {
 window.removeMember = async function(groupId, memberId) {
   if (!confirm('האם אתה בטוח שברצונך להוציא משתתף זה מהקבוצה?')) return;
 
-  if (isStaticEnv) {
-    const res = LocalDB.removeMember(groupId, memberId, state.adminPin);
-    if (res.success) {
-      showToast('המשתתף הוסר בהצלחה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(res.error, 'error');
-    }
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/remove-member`, {
+    const data = await apiCall('remove_member', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin, member_id: memberId })
+      body: { group_id: groupId, member_id: memberId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast('המשתתף הוסר והמקום פונה בהצלחה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(data.error || 'שגיאה בהסרת המשתתף', 'error');
-    }
-  } catch (err) {
-    LocalDB.removeMember(groupId, memberId, state.adminPin);
-    showToast('המשתתף הוסר בהצלחה', 'success');
+    showToast('המשתתף הוסר והמקום פונה בהצלחה', 'success');
     refreshAdminDashboard(groupId);
     loadGroups();
     loadStats();
+  } catch (err) {
+    showToast(err.message || 'שגיאה בהסרת המשתתף', 'error');
   }
 };
 
 async function refreshAdminDashboard(groupId) {
-  if (isStaticEnv) {
-    const res = LocalDB.adminGroup(groupId, state.adminPin);
-    if (res.success) renderAdminDashboard(res.group);
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/admin`, {
+    const data = await apiCall('group_admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin })
+      body: { group_id: groupId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      renderAdminDashboard(data.group);
-    }
+    renderAdminDashboard(data.group);
   } catch (err) {
-    const res = LocalDB.adminGroup(groupId, state.adminPin);
-    if (res.success) renderAdminDashboard(res.group);
+    showToast(err.message || 'שגיאה ברענון לוח הניהול', 'error');
   }
 }
 
 async function closeAdminGroup(groupId) {
-  if (isStaticEnv) {
-    const res = LocalDB.toggleGroupStatus(groupId, 'closed', state.adminPin);
-    if (res.success) {
-      showToast('הקבוצה סומנה כסגורה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-    } else {
-      showToast(res.error, 'error');
-    }
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/close`, {
+    await apiCall('close_group', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin })
+      body: { group_id: groupId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast('הקבוצה סומנה כסגורה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-    } else {
-      showToast(data.error || 'שגיאה בסגירת הקבוצה', 'error');
-    }
-  } catch (err) {
-    const res = LocalDB.toggleGroupStatus(groupId, 'closed', state.adminPin);
     showToast('הקבוצה סומנה כסגורה', 'success');
     refreshAdminDashboard(groupId);
     loadGroups();
+  } catch (err) {
+    showToast(err.message || 'שגיאה בסגירת הקבוצה', 'error');
   }
 }
 
 async function reopenAdminGroup(groupId) {
-  if (isStaticEnv) {
-    const res = LocalDB.toggleGroupStatus(groupId, 'open', state.adminPin);
-    if (res.success) {
-      showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-    } else {
-      showToast(res.error, 'error');
-    }
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/reopen`, {
+    await apiCall('reopen_group', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin })
+      body: { group_id: groupId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
-      refreshAdminDashboard(groupId);
-      loadGroups();
-    } else {
-      showToast(data.error || 'שגיאה בפתיחת הקבוצה מחדש', 'error');
-    }
-  } catch (err) {
-    const res = LocalDB.toggleGroupStatus(groupId, 'open', state.adminPin);
     showToast('הקבוצה נפתחה מחדש בהצלחה', 'success');
     refreshAdminDashboard(groupId);
     loadGroups();
+  } catch (err) {
+    showToast(err.message || 'שגיאה בפתיחת הקבוצה מחדש', 'error');
   }
 }
 
 async function deleteAdminGroup(groupId) {
   if (!confirm('האם אתה בטוח שברצונך למחוק קבוצה זו לצמיתות?')) return;
 
-  if (isStaticEnv) {
-    const res = LocalDB.deleteGroup(groupId, state.adminPin);
-    if (res.success) {
-      showToast('הקבוצה נמחקה בהצלחה', 'success');
-      closeModal(groupAdminModal);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(res.error, 'error');
-    }
-    return;
-  }
-
   try {
-    const res = await fetch(`/api/groups/${groupId}/delete`, {
+    await apiCall('delete_group', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: state.adminPin })
+      body: { group_id: groupId, pin: state.adminPin }
     });
-    const data = await res.json();
-    if (data.success) {
-      showToast('הקבוצה נמחקה בהצלחה', 'success');
-      closeModal(groupAdminModal);
-      loadGroups();
-      loadStats();
-    } else {
-      showToast(data.error || 'שגיאה במחיקת הקבוצה', 'error');
-    }
-  } catch (err) {
-    const res = LocalDB.deleteGroup(groupId, state.adminPin);
-    showToast('הקבוצה נמחקה בהצלחה', 'success');
+    showToast('הקבוצה נמחקה בהצלחה מהשרת', 'success');
     closeModal(groupAdminModal);
     loadGroups();
     loadStats();
+  } catch (err) {
+    showToast(err.message || 'שגיאה במחיקת הקבוצה', 'error');
   }
 }
 
@@ -1519,50 +934,19 @@ deletePostForm.addEventListener('submit', async (e) => {
   const confirmBtn = document.getElementById('confirmDeleteBtn');
 
   confirmBtn.disabled = true;
-  confirmBtn.textContent = 'מוחק...';
-
-  if (isStaticEnv) {
-    const res = LocalDB.deletePost(postId, pin);
-    if (res.success) {
-      showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
-      closeModal(deletePostModal);
-      loadStats();
-      loadPosts();
-    } else {
-      showToast(res.error, 'error');
-    }
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = 'מחק מודעה';
-    return;
-  }
+  confirmBtn.textContent = 'מוחק מהשרת...';
 
   try {
-    const res = await fetch(`/api/posts/${postId}/delete`, {
+    await apiCall('delete_post', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin })
+      body: { id: postId, pin }
     });
-    if (!res.ok) throw new Error('API unavailable');
-    const data = await res.json();
-
-    if (data.success) {
-      showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
-      closeModal(deletePostModal);
-      await loadStats();
-      await loadPosts();
-    } else {
-      showToast(data.error || 'קוד סודי שגוי או שהמודעה לא נמצאה', 'error');
-    }
+    showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
+    closeModal(deletePostModal);
+    await loadStats();
+    await loadPosts();
   } catch (err) {
-    const res = LocalDB.deletePost(postId, pin);
-    if (res.success) {
-      showToast('המודעה הוסרה בהצלחה מהלוח', 'success');
-      closeModal(deletePostModal);
-      loadStats();
-      loadPosts();
-    } else {
-      showToast('קוד סודי שגוי', 'error');
-    }
+    showToast(err.message || 'קוד סודי (PIN) שגוי', 'error');
   } finally {
     confirmBtn.disabled = false;
     confirmBtn.textContent = 'מחק מודעה';

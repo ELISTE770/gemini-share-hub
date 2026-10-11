@@ -3,6 +3,13 @@ const cors = require('cors');
 const path = require('node:path');
 const db = require('./db');
 
+process.on('uncaughtException', (err) => {
+  console.error('Server Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Server Unhandled Rejection:', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
